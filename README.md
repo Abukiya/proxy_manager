@@ -1,0 +1,92 @@
+# abukiya.proxy — Omarchy proxy manager plugin
+
+Background service plugin for Omarchy that replaces the old ad-hoc
+`setproxy.sh` / `clearproxy.sh` scripts. Toggles system proxy configuration
+for a phone-hotspot gateway, applied live and reachable from the Omarchy menu.
+
+## What it does
+
+On `enable`, sets the proxy (auto-detected gateway) for:
+
+- **env** — `~/.config/environment.d/proxy.conf` + a `# PROXY_SETTINGS` block
+  in `~/.bashrc` + `systemctl --user set-environment`
+- **git** — global `http.proxy` / `https.proxy`
+- **npm** — `proxy`, `https-proxy`, `strict-ssl false`, `maxsockets 1`
+- **yarn** — `proxy`, `https-proxy` (if yarn installed)
+- **pip** — `~/.config/pip/pip.conf`
+- **browser** — user `.desktop` launchers routed through a per-browser wrapper
+  (`~/.local/bin/omarchy-proxy-browser`) that reads the live gateway at launch
+- **vscode** — `http.proxy` + `http.proxyStrictSSL` in `Code/User/settings.json`
+- **pacman** — `/etc/sudoers.d/omarchy-proxy` env_keep so `sudo pacman`/`yay`
+  keep the proxy vars (needs one-time pkexec auth)
+
+`disable` reverts all of the above.
+
+## Layout
+
+```
+proxy_manager/
+  plugin/                 -> live plugin dir (symlinked into omarchy plugins)
+    manifest.json
+    Service.qml           IPC service (omarchy-shell abukiya.proxy ...)
+    proxy-manager.sh      all the logic
+  install.sh              (re)install: symlink + menu + enable
+  docs/
+    omarchy-menu.jsonc    Proxy submenu snippet
+    proxy.json            sample config
+  README.md
+```
+
+## Install
+
+```sh
+./install.sh
+```
+
+This symlinks `~/.config/omarchy/plugins/abukiya.proxy` -> this repo's
+`plugin/` and re-enables the plugin. Afterwards:
+
+```sh
+omarchy-shell shell rescanPlugins
+omarchy-shell abukiya.proxy status
+```
+
+## Usage
+
+Menu: `Super+Alt+Space` -> **Proxy** -> Enable / Disable / Toggle / Status.
+
+CLI:
+
+```sh
+omarchy-shell abukiya.proxy status   # JSON: enabled, proxy, active integrations
+omarchy-shell abukiya.proxy enable
+omarchy-shell abukiya.proxy disable
+omarchy-shell abukiya.proxy toggle
+```
+
+Config lives in `~/.config/omarchy/proxy.json` (`gatewayAuto: true` re-detects
+the gateway on every enable).
+
+## Removal
+
+1. Revert first: `omarchy-shell abukiya.proxy disable` (cleans all integrations).
+2. Then disable the plugin: `omarchy plugin disable abukiya.proxy`.
+3. Delete `~/.config/omarchy/plugins/abukiya.proxy` (the symlink), the repo,
+   and the Proxy menu entries in `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
+
+## Gotchas (learned the hard way)
+
+1. **`.bashrc` interactive guard** — the `# PROXY_SETTINGS` block MUST be
+   inserted *above* `[[ $- != *i* ]] && return`. The menu launches terminals
+   via non-interactive `bash -lc` (execDetached), so a block below the guard is
+   never sourced and `sudo pacman -S` from Menu -> Install gets no `http_proxy`.
+2. **`omarchy-launch-browser` strips Exec flags** — it reads only the first
+   token of a `.desktop` `Exec=` line, so baking `--proxy-server=...` into
+   launchers is pointless. Launchers route through `omarchy-proxy-<browser>`
+   wrappers that add the flag at launch time.
+3. **pacman must run last** in `apply()` — `enable_pacman` calls `pkexec`
+   (modal polkit dialog) and would block the browser/env steps behind it.
+4. **Status can lag ~2s** after toggle — the IPC `status` returns a cached
+   snapshot refreshed asynchronously; system state is correct immediately.
+5. **`/etc/sudoers.d` unreadable by the user** — existence checks use
+   `pkexec test -f`, not `[[ -f ]]`, which always fails on the directory perms.

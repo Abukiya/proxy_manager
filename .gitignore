@@ -1,0 +1,9 @@
+# Runtime state — machine-specific, contains your gateway/network info.
+# These are managed by the plugin on the live system, not tracked here.
+proxy.json
+environment.d/
+*.tmp
+
+# Editor / OS noise
+*.swp
+.DS_Store

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "abukiya.proxy",
+  "name": "Proxy Manager",
+  "version": "1.0.0",
+  "author": "abukiya",
+  "description": "Toggle http/https proxy for the system and common package managers",
+  "kinds": ["service"],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
