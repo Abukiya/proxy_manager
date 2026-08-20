@@ -122,6 +122,14 @@ the hotspot even when the phone's IP changes.
    message is tagged `-a omarchy-action` (bypasses DND in the omarchy
    notifications service).
 
+8. **QML `Timer` needs `running: true`** — a `Timer` with `repeat`/`interval`
+   but no `running` never starts, so a widget that "polls" with
+   `running: true` on its `Process` runs its probe exactly once (at mount,
+   before the service cache is ready → `enabled=undefined`) and then freezes.
+   The bar icon showed "Proxy off" forever while the proxy was on. Fix:
+   `running: true` on the poll timer (the first-party SystemUpdate widget sets
+   it too).
+
 ## Side effects if you remove it
 
 `omarchy plugin disable` (or deleting the plugin) does NOT revert anything —

@@ -43,6 +43,7 @@ BarWidget {
   Timer {
     id: pollTimer
     interval: 3000
+    running: true
     repeat: true
     triggeredOnStart: true
     onTriggered: root.refresh()
