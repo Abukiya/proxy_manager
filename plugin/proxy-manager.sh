@@ -204,8 +204,26 @@ disable_pip() {
 
 # pacman runs as root via sudo; sudo drops proxy env vars unless a sudoers
 # rule keeps them. This only works when the pkexec auth succeeds.
+#
+# Status uses a marker file instead of probing pkexec every time: pkexec
+# needs the polkit agent, which is not reliably reachable from the shell's
+# service context (the agent registers after the service's first status
+# refresh), and each probe blocks ~5s on a slow agent. enable/disable write
+# and clear the marker; the one-time fallback below seeds it for setups that
+# already have the rule.
+PACMAN_MARKER="$STATE_DIR/pacman-sudoers"
+
 PACMAN_SUDOERS_EXISTS() {
-  timeout 5 pkexec sh -c 'test -f /etc/sudoers.d/omarchy-proxy' >/dev/null 2>&1
+  if [[ -f "$PACMAN_MARKER" ]]; then
+    return 0
+  fi
+  # One-time probe: confirm the rule is really present and remember it so
+  # later status calls are instant and context-independent.
+  if timeout 5 pkexec sh -c 'test -f /etc/sudoers.d/omarchy-proxy' >/dev/null 2>&1; then
+    : > "$PACMAN_MARKER"
+    return 0
+  fi
+  return 1
 }
 
 enable_pacman() {
@@ -214,8 +232,11 @@ enable_pacman() {
   fi
   local body='Defaults env_keep += "http_proxy https_proxy ftp_proxy no_proxy all_proxy"'
   if command -v pkexec >/dev/null 2>&1; then
-    printf '%s\n' "$body" | pkexec sh -c "cat > '$PACMAN_SUDOERS' && chmod 440 '$PACMAN_SUDOERS'" 2>/dev/null \
-      || echo "warning: could not write $PACMAN_SUDOERS (needs pkexec auth)"
+    if printf '%s\n' "$body" | pkexec sh -c "cat > '$PACMAN_SUDOERS' && chmod 440 '$PACMAN_SUDOERS'" 2>/dev/null; then
+      : > "$PACMAN_MARKER"
+    else
+      echo "warning: could not write $PACMAN_SUDOERS (needs pkexec auth)"
+    fi
   else
     echo "warning: pkexec not available; skipping sudoers env_keep"
   fi
@@ -223,8 +244,11 @@ enable_pacman() {
 
 disable_pacman() {
   if PACMAN_SUDOERS_EXISTS; then
-    pkexec rm -f "$PACMAN_SUDOERS" 2>/dev/null \
-      || echo "warning: could not remove $PACMAN_SUDOERS (needs pkexec auth)"
+    if pkexec rm -f "$PACMAN_SUDOERS" 2>/dev/null; then
+      rm -f "$PACMAN_MARKER"
+    else
+      echo "warning: could not remove $PACMAN_SUDOERS (needs pkexec auth)"
+    fi
   fi
 }
 

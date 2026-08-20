@@ -5,24 +5,35 @@ What we built and everything we learned along the way. Read this to catch up.
 ## What this is
 
 An Omarchy shell plugin (`abukiya.proxy`) that replaces your temporary
-`setproxy.sh` / `clearproxy.sh`. It's a **background service**: toggles
-system proxy config for a phone-hotspot gateway, applied live, controllable
-from the Omarchy menu. No persistent UI.
+`setproxy.sh` / `clearproxy.sh`. It toggles system proxy config for a
+phone-hotspot gateway, applied live, and is controlled from a **bar widget +
+panel** (no more menu integration). The service is purely a state machine; the
+UI is two QML files that call the same IPC commands you'd run by hand.
 
 ## Where everything lives
 
 ```
 ~/proxy_manager/                  <- this project (git repo)
-  plugin/                         <- symlinked into omarchy as the live plugin
+  plugin/                         <- copied into omarchy as the live plugin
     manifest.json
     Service.qml                   IPC service (omarchy-shell abukiya.proxy ...)
+    BarWidget.qml                 bar icon; click opens/closes the panel
+    Panel.qml                     enable/disable switch + status rows
     proxy-manager.sh              all the logic
-  install.sh                      (re)install: symlink + enable
-  docs/                           menu snippet + sample config
+  install.sh                      (re)install: copy + enable
+  sync.sh                         re-sync plugin/ to the live dir after edits
+  docs/                           notes + sample config
   README.md                       install/usage/removal
   NOTES.md                        this file
-~/.config/omarchy/plugins/abukiya.proxy   -> symlink to ~/proxy_manager/plugin
+~/.config/omarchy/plugins/abukiya.proxy   -> real copy of ~/proxy_manager/plugin
 ```
+
+**The live dir is a real copy, NOT a symlink.** Qt QML refuses to load
+`bar-widget`/`panel` entry points through a symlinked directory — it reports
+"File name case mismatch" for every widget/panel component (services loaded
+through the symlink still worked, which made this very confusing to debug).
+After editing files in `plugin/`, run `./sync.sh` to copy them over and
+hot-reload the shell.
 
 The plugin's live config/state lives outside the repo:
 - `~/.config/omarchy/proxy.json` — config (gatewayAuto, integrations, enabled)
@@ -48,7 +59,10 @@ The plugin's live config/state lives outside the repo:
 
 ## How to use
 
-Menu: `Super+Alt+Space` → **Proxy** → Enable / Disable / Toggle / Status.
+Bar widget (right side): the **󰓓 Proxy** icon is accent-colored when the proxy
+is on. Left-click opens/closes the panel; the proxy itself is toggled from the
+panel's Enable/Disable switch (with optimistic UI — status lags ~2s). The panel
+shows status rows for git, npm, yarn, pip, VSCode, browser, pacman and the endpoint.
 
 CLI:
 ```
@@ -86,11 +100,27 @@ the hotspot even when the phone's IP changes.
    catches up. Not a bug, just async.
 
 5. **`/etc/sudoers.d` unreadable by the user** — `[[ -f ... ]]` on the sudoers
-   file always fails (directory perms). Existence checks use `pkexec test -f`.
+   file always fails (directory perms). AND `pkexec test -f` from the shell's
+   service context is unreliable: the polkit agent registers after the
+   service's startup status refresh, so the probe times out (~5s) and the
+   panel showed pacman/yay as OFF even though the rule existed. Fix: pacman
+   status reads a marker (`~/.config/hotspot-proxy/pacman-sudoers`) written by
+   enable/disable and seeded by a one-time probe, so status is instant and
+   context-independent.
 
-6. **No notification daemon** — `notify-send` silently does nothing unless the
+6. **Qt QML rejects symlinked plugin dirs** — "File name case mismatch" on
+   widget/panel entry points. The fix that finally landed: the live plugin dir
+   is a real directory, kept in sync from the repo with `./sync.sh`.
+   Debugging notes from that hunt: the failure was *per-URL* and cached
+   in-memory by the running shell — a URL that first failed (e.g. while the dir
+   was a symlink) kept failing for the whole shell session even after the dir
+   became real; a fresh shell (or `omarchy-restart-shell`) cleared it. Probe
+   plugins with the same content in different dirs loaded fine, which
+   initially pointed the finger at the file contents instead.
+
+7. **No notification daemon** — `notify-send` silently does nothing unless the
    message is tagged `-a omarchy-action` (bypasses DND in the omarchy
-   notifications service). Menu "Status" uses that.
+   notifications service).
 
 ## Side effects if you remove it
 
@@ -98,7 +128,7 @@ the hotspot even when the phone's IP changes.
 it only removes the plugin from the shell. To fully remove:
 1. `omarchy-shell abukiya.proxy disable` (reverts all integrations)
 2. `omarchy plugin disable abukiya.proxy`
-3. Delete the symlink + repo + Proxy menu entries.
+3. Delete the copied plugin dir + repo (menu entries already removed).
 
 Leftovers from old setproxy.sh (unmanaged by the plugin): `# PROXY_ALIASES`
 block in `~/.bashrc` and `~/.local/bin/chrome-proxy` — only relevant if you
@@ -108,7 +138,8 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
 
 - Working: env, bashrc, git, npm, pip, vscode, browser, pacman (needs one-time
   pkexec auth to create the sudoers file).
-- Verified end-to-end: menu toggle, IPC commands, browser keybind launch,
-  menu→install (after the .bashrc fix), status toast.
-- The plugin is now in a git repo (`~/proxy_manager`) with a clean baseline
-  commit, symlinked into omarchy.
+- Verified end-to-end: IPC commands, browser keybind launch, menu→install
+  (after the .bashrc fix), and the new UI (bar widget loads, panel opens/closes,
+  service status IPC round-trips).
+- The plugin lives in a git repo (`~/proxy_manager`), copied into omarchy's
+  plugin dir and kept in sync with `./sync.sh`.

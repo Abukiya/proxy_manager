@@ -2,7 +2,8 @@
 
 Background service plugin for Omarchy that replaces the old ad-hoc
 `setproxy.sh` / `clearproxy.sh` scripts. Toggles system proxy configuration
-for a phone-hotspot gateway, applied live and reachable from the Omarchy menu.
+for a phone-hotspot gateway, applied live and reachable from a bar widget and
+panel.
 
 ## What it does
 
@@ -26,16 +27,24 @@ On `enable`, sets the proxy (auto-detected gateway) for:
 
 ```
 proxy_manager/
-  plugin/                 -> live plugin dir (symlinked into omarchy plugins)
+  plugin/                 -> live plugin dir (copied into omarchy plugins)
     manifest.json
     Service.qml           IPC service (omarchy-shell abukiya.proxy ...)
+    BarWidget.qml         bar icon; left-click opens/closes the panel
+    Panel.qml             enable/disable switch + integration status rows
     proxy-manager.sh      all the logic
-  install.sh              (re)install: symlink + menu + enable
+  install.sh              (re)install: copy + enable
+  sync.sh                 re-sync plugin/ to the live dir after edits
   docs/
-    omarchy-menu.jsonc    Proxy submenu snippet
+    omarchy-menu.jsonc    note: menu integration removed (see file)
     proxy.json            sample config
   README.md
 ```
+
+> The live plugin dir is a real **copy**, not a symlink. Qt QML refuses to
+> load `bar-widget`/`panel` entry points through a symlinked directory
+> ("File name case mismatch"). After editing files in `plugin/`, run
+> `./sync.sh` to copy them over and hot-reload the shell.
 
 ## Install
 
@@ -43,8 +52,8 @@ proxy_manager/
 ./install.sh
 ```
 
-This symlinks `~/.config/omarchy/plugins/abukiya.proxy` -> this repo's
-`plugin/` and re-enables the plugin. Afterwards:
+This copies `plugin/` to `~/.config/omarchy/plugins/abukiya.proxy` (a real
+directory — see layout note above) and re-enables the plugin. Afterwards:
 
 ```sh
 omarchy-shell shell rescanPlugins
@@ -53,7 +62,11 @@ omarchy-shell abukiya.proxy status
 
 ## Usage
 
-Menu: `Super+Alt+Space` -> **Proxy** -> Enable / Disable / Toggle / Status.
+Bar widget (right side): the **󰓓 Proxy** icon shows proxy state (accent =
+enabled). Left-click opens/closes the proxy panel; the proxy itself is toggled
+from the panel's Enable/Disable switch. The panel also shows status rows for
+git, npm, yarn, pip, VSCode, browser, and pacman integrations, and the
+configured endpoint.
 
 CLI:
 
@@ -71,8 +84,8 @@ the gateway on every enable).
 
 1. Revert first: `omarchy-shell abukiya.proxy disable` (cleans all integrations).
 2. Then disable the plugin: `omarchy plugin disable abukiya.proxy`.
-3. Delete `~/.config/omarchy/plugins/abukiya.proxy` (the symlink), the repo,
-   and the Proxy menu entries in `~/.config/omarchy/extensions/omarchy-menu.jsonc`.
+3. Delete `~/.config/omarchy/plugins/abukiya.proxy` (the copied plugin dir) and
+   the repo.
 
 ## Gotchas (learned the hard way)
 

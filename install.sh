@@ -1,6 +1,11 @@
 #!/bin/bash
 # Install abukiya.proxy from this repo into Omarchy.
-# Safe to re-run: only (re)creates the symlink and enables the plugin.
+# Safe to re-run: only (re)creates the plugin directory and enables the plugin.
+#
+# NOTE: the live plugin directory is a real COPY, not a symlink. Qt/QML's
+# component loader refuses to load bar-widget/panel entry points through a
+# symlinked directory ("File name case mismatch"), so a copy is required.
+# Re-sync after editing files in plugin/ with: ./sync.sh
 
 set -euo pipefail
 
@@ -12,14 +17,15 @@ LIVE_PLUGIN_DIR="$HOME/.config/omarchy/plugins/abukiya.proxy"
 
 mkdir -p "$HOME/.config/omarchy/plugins"
 
-# Replace an existing real directory (e.g. an older copy) with the symlink.
-if [[ -e "$LIVE_PLUGIN_DIR" && ! -L "$LIVE_PLUGIN_DIR" ]]; then
-  echo "note: replacing real dir $LIVE_PLUGIN_DIR with symlink"
-  rm -rf "$LIVE_PLUGIN_DIR"
+# Replace a symlink (older install layout) with a real directory.
+if [[ -L "$LIVE_PLUGIN_DIR" ]]; then
+  echo "note: replacing symlink $LIVE_PLUGIN_DIR with real dir"
+  rm "$LIVE_PLUGIN_DIR"
 fi
 
-ln -sfn "$PLUGIN_DIR" "$LIVE_PLUGIN_DIR"
-echo "symlinked: $LIVE_PLUGIN_DIR -> $PLUGIN_DIR"
+mkdir -p "$LIVE_PLUGIN_DIR"
+cp -a "$PLUGIN_DIR"/. "$LIVE_PLUGIN_DIR"/
+echo "installed: $LIVE_PLUGIN_DIR (real dir, copied from $PLUGIN_DIR)"
 
 # Enable the plugin if it isn't already.
 if ! grep -q '"id":"abukiya.proxy"' "$HOME/.config/omarchy/shell.json" 2>/dev/null; then

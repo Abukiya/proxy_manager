@@ -5,8 +5,17 @@
   "version": "1.0.0",
   "author": "abukiya",
   "description": "Toggle http/https proxy for the system and common package managers",
-  "kinds": ["service"],
+  "kinds": ["service", "bar-widget", "panel"],
   "entryPoints": {
-    "service": "Service.qml"
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml",
+    "panel": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Proxy",
+    "description": "Proxy on/off indicator; click opens the panel, toggle the proxy from the panel",
+    "category": "Network",
+    "defaultSection": "right",
+    "allowMultiple": false
   }
 }

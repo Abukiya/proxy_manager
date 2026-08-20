@@ -1,9 +1,9 @@
 {
-  "//": "Add this section to ~/.config/omarchy/extensions/omarchy-menu.jsonc",
-  "proxy": {"icon":"\uf4d3","label":"Proxy","aliases":["proxy","proxies"]},
-  "proxy.enable": {"icon":"\uf042a","label":"Enable","when":"omarchy-shell abukiya.proxy status | grep -q '\"enabled\":false'","checked":"omarchy-shell abukiya.proxy status | grep -q '\"enabled\":true'","action":"omarchy-shell abukiya.proxy enable"},
-  "proxy.disable": {"icon":"\uf0439","label":"Disable","when":"omarchy-shell abukiya.proxy status | grep -q '\"enabled\":true'","checked":"omarchy-shell abukiya.proxy status | grep -q '\"enabled\":false'","action":"omarchy-shell abukiya.proxy disable"},
-  "proxy.toggle": {"icon":"\uf04c5","label":"Toggle","action":"omarchy-shell abukiya.proxy toggle"},
-  "proxy.status": {"icon":"\uf0b6e","label":"Status","action":"notify-send -a omarchy-action '$(omarchy-shell abukiya.proxy status)'"},
-  "proxy.configure": {"icon":"\uf0b6d","label":"Edit Config","action":"omarchy-launch-editor \"$HOME/.config/omarchy/proxy.json\""}
+  "//": "Menu integration for the proxy plugin was REMOVED (bar widget + panel
+          replaced it). The proxy is controlled from the bar widget/panel:
+            - click the 󰓓 Proxy bar icon: opens/closes the panel
+            - panel toggle switch: enable/disable (the bar icon no longer toggles the proxy)
+          The IPC commands still exist and work:
+            omarchy-shell abukiya.proxy status|enable|disable|toggle
+          No omarchy-menu.jsonc section is needed anymore."
 }
