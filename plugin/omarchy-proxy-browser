@@ -11,6 +11,8 @@ command -v "$BIN" >/dev/null 2>&1 || BIN="chromium"
 
 if [[ -f "$STATE_FILE" ]]; then
   GW=$(head -1 "$STATE_FILE" | tr -d '[:space:]')
-  [[ -n $GW ]] && exec "$BIN" --proxy-server="$GW" "$@"
+  if [[ -n $GW ]] && [[ "$GW" =~ ^https?:// ]]; then
+    exec "$BIN" --proxy-server="$GW" "$@"
+  fi
 fi
 exec "$BIN" "$@"

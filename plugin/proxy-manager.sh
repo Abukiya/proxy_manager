@@ -27,7 +27,7 @@ get_port() {
   else
     port=8080
   fi
-  if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+  if [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 ]] && [[ "$port" -le 65535 ]]; then
     echo "$port"
   else
     echo "8080"
@@ -92,8 +92,8 @@ set_enabled_flag() {
 # This is what keeps the proxy correct when the phone hotspot gateway moves.
 refresh_gateway_urls() {
   local auto
-  auto=$(cfg_get '.gatewayAuto // true')
-  if [[ "$auto" != "true" ]]; then
+  auto=$(cfg_get '.gatewayAuto')
+  if [[ "$auto" == "false" ]]; then
     return 0
   fi
   local url
@@ -127,8 +127,9 @@ EOF
   # Install flow would have no http_proxy and fail on a hotspot-only network.
   sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
   awk -v block="$http|$https|$no" '
-    BEGIN { split(block, a, "|") }
+    BEGIN { split(block, a, "|"); found=0 }
     /^\[\[ \$- != \*i\* \]\] && return/ {
+      found=1
       print "# PROXY_SETTINGS"
       print "export HTTP_PROXY=" a[1]
       print "export HTTPS_PROXY=" a[2]
@@ -139,6 +140,17 @@ EOF
       print ""
     }
     { print }
+    END {
+      if (!found) {
+        print "# PROXY_SETTINGS"
+        print "export HTTP_PROXY=" a[1]
+        print "export HTTPS_PROXY=" a[2]
+        print "export http_proxy=" a[1]
+        print "export https_proxy=" a[2]
+        print "export NODE_USE_ENV_PROXY=1"
+        print "# END_PROXY_SETTINGS"
+      }
+    }
   ' "$BASHRC" > "$BASHRC.tmp"
   mv "$BASHRC.tmp" "$BASHRC"
   # Best effort for the running session's future systemd user services.
@@ -241,13 +253,18 @@ disable_pip() {
 # already have the rule.
 PACMAN_MARKER="$STATE_DIR/pacman-sudoers"
 
-PACMAN_SUDOERS_EXISTS() {
+pacman_sudoers_exists() {
   [[ -f "$PACMAN_MARKER" ]]
 }
 
 enable_pacman() {
-  # Skip if already configured (marker file present).
-  [[ -f "$PACMAN_MARKER" ]] && return 0
+  if [[ -f "$PACMAN_MARKER" ]]; then
+    # Verify the sudoers file actually exists (marker can desync if manually deleted).
+    if pkexec test -f "$PACMAN_SUDOERS" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$PACMAN_MARKER"
+  fi
   if command -v pkexec >/dev/null 2>&1 && [[ -f "$SUDOERS_HELPER" ]]; then
     if pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
       : > "$PACMAN_MARKER"
@@ -326,7 +343,8 @@ ensure_wrapper_links() {
 # (which omarchy-launch-browser keeps), not the bare binary.
 route_launcher() {
   local user_desktop="$1"
-  sed -i "s|^Exec=\([^ ]*\)|Exec=$HOME/.local/bin/omarchy-proxy-${BROWSER_NAME} |" "$user_desktop"
+  local escaped_home="${HOME//\//\\/}"
+  sed -i "s|^Exec=\([^ ]*\)|Exec=${escaped_home}/.local/bin/omarchy-proxy-${BROWSER_NAME} |" "$user_desktop"
 }
 
 enable_browser() {
@@ -383,7 +401,7 @@ integration_active() {
     out+="\"yarn\":false,"
   fi
   out+="\"pip\":$(grep -q '^\s*proxy\s*=' "$PIP_CONF_DIR/pip.conf" 2>/dev/null && echo true || echo false),"
-  out+="\"pacman\":$(PACMAN_SUDOERS_EXISTS && echo true || echo false),"
+  out+="\"pacman\":$(pacman_sudoers_exists && echo true || echo false),"
   local vscode_active="false"
   if [[ -f "$VSCODE_SETTINGS" ]] && jq -e '."http.proxy" != null' "$VSCODE_SETTINGS" >/dev/null 2>&1; then
     vscode_active="true"
