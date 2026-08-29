@@ -135,13 +135,16 @@ EOF
   ' "$BASHRC" > "$BASHRC.tmp"
   mv "$BASHRC.tmp" "$BASHRC"
   # Best effort for the running session's future systemd user services.
-  systemctl --user set-environment http_proxy="$http" https_proxy="$https" no_proxy="$no" 2>/dev/null || true
+  systemctl --user set-environment \
+    http_proxy="$http" HTTP_PROXY="$http" \
+    https_proxy="$https" HTTPS_PROXY="$https" \
+    no_proxy="$no" NO_PROXY="$no" 2>/dev/null || true
 }
 
 disable_env() {
   rm -f "$ENV_DIR/proxy.conf"
   sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
-  systemctl --user unset-environment http_proxy https_proxy no_proxy 2>/dev/null || true
+  systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
 }
 
 # ------------------------------------------------------------------------ git
@@ -172,6 +175,8 @@ disable_npm() {
   command -v npm >/dev/null 2>&1 || return 0
   npm config delete proxy >/dev/null 2>&1 || true
   npm config delete https-proxy >/dev/null 2>&1 || true
+  npm config delete strict-ssl >/dev/null 2>&1 || true
+  npm config delete maxsockets >/dev/null 2>&1 || true
 }
 
 # ----------------------------------------------------------------------- yarn
@@ -305,6 +310,7 @@ WRAPPER_BIN="$HOME/.local/bin/omarchy-proxy-browser"
 WRAPPER_SRC="$(dirname "$(readlink -f "$0")")/omarchy-proxy-browser"
 
 write_wrapper() {
+  [[ -f "$WRAPPER_SRC" ]] || { echo "warning: wrapper source not found at $WRAPPER_SRC" >&2; return 1; }
   mkdir -p "$HOME/.local/bin"
   cp "$WRAPPER_SRC" "$WRAPPER_BIN"
   chmod +x "$WRAPPER_BIN"

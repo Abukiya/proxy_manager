@@ -354,3 +354,157 @@ EOF
   val=$(jq -r '.enabled' "$CONFIG_FILE")
   [ "$val" = "false" ]
 }
+
+# ---------------------------------------------------------------------------
+# enable_npm / disable_npm
+# ---------------------------------------------------------------------------
+
+@test "enable_npm sets proxy, https-proxy, strict-ssl, and maxsockets" {
+  # Track npm calls via a temp file.
+  local log="$BATS_TEST_TMPDIR/npm_calls.log"
+  cat > "$HOME/bin/npm" <<NPMSTUB
+#!/bin/bash
+echo "\$@" >> "$log"
+exit 0
+NPMSTUB
+  chmod +x "$HOME/bin/npm"
+
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://proxy:8080", "httpsProxy": "http://proxy:8080" }
+EOF
+
+  run enable_npm
+  [ "$status" -eq 0 ]
+  # Verify all four config sets were called.
+  grep -q 'config set proxy http://proxy:8080' "$log"
+  grep -q 'config set https-proxy http://proxy:8080' "$log"
+  grep -q 'config set strict-ssl false' "$log"
+  grep -q 'config set maxsockets 1' "$log"
+}
+
+@test "disable_npm deletes proxy, https-proxy, strict-ssl, and maxsockets" {
+  local log="$BATS_TEST_TMPDIR/npm_calls.log"
+  cat > "$HOME/bin/npm" <<NPMSTUB
+#!/bin/bash
+echo "\$@" >> "$log"
+exit 0
+NPMSTUB
+  chmod +x "$HOME/bin/npm"
+
+  run disable_npm
+  [ "$status" -eq 0 ]
+  # Verify all four config deletes were called.
+  grep -q 'config delete proxy' "$log"
+  grep -q 'config delete https-proxy' "$log"
+  grep -q 'config delete strict-ssl' "$log"
+  grep -q 'config delete maxsockets' "$log"
+}
+
+@test "disable_npm is a no-op when npm is not installed" {
+  # Remove npm from PATH entirely.
+  rm -f "$HOME/bin/npm"
+  PATH="/usr/bin:/bin" run disable_npm
+  [ "$status" -eq 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# enable_env / disable_env
+# ---------------------------------------------------------------------------
+
+@test "enable_env creates proxy.conf with upper and lower case vars" {
+  run enable_env
+  [ "$status" -eq 0 ]
+  [ -f "$ENV_DIR/proxy.conf" ]
+  grep -q '^http_proxy=' "$ENV_DIR/proxy.conf"
+  grep -q '^HTTP_PROXY=' "$ENV_DIR/proxy.conf"
+  grep -q '^https_proxy=' "$ENV_DIR/proxy.conf"
+  grep -q '^HTTPS_PROXY=' "$ENV_DIR/proxy.conf"
+  grep -q '^no_proxy=' "$ENV_DIR/proxy.conf"
+  grep -q '^NO_PROXY=' "$ENV_DIR/proxy.conf"
+}
+
+@test "enable_env inserts proxy block above bashrc interactive guard" {
+  run enable_env
+  [ "$status" -eq 0 ]
+  # Block should be above the guard.
+  local block_line guard_line
+  block_line=$(grep -n '# PROXY_SETTINGS' "$BASHRC" | head -1 | cut -d: -f1)
+  guard_line=$(grep -n '\[\[ \$- != \*i\* \]\] && return' "$BASHRC" | cut -d: -f1)
+  [ -n "$block_line" ]
+  [ -n "$guard_line" ]
+  [ "$block_line" -lt "$guard_line" ]
+}
+
+@test "enable_env sets uppercase systemctl env vars" {
+  local log="$BATS_TEST_TMPDIR/systemctl_calls.log"
+  cat > "$HOME/bin/systemctl" <<STUB
+#!/bin/bash
+echo "\$@" >> "$log"
+exit 0
+STUB
+  chmod +x "$HOME/bin/systemctl"
+
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://proxy:8080", "httpsProxy": "http://proxy:8080", "noProxy": "localhost" }
+EOF
+
+  run enable_env
+  [ "$status" -eq 0 ]
+  grep -q 'HTTP_PROXY=http://proxy:8080' "$log"
+  grep -q 'HTTPS_PROXY=http://proxy:8080' "$log"
+  grep -q 'NO_PROXY=localhost' "$log"
+}
+
+@test "disable_env removes proxy.conf and bashrc block" {
+  # Set up state first.
+  mkdir -p "$ENV_DIR"
+  echo "test" > "$ENV_DIR/proxy.conf"
+  sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
+
+  run disable_env
+  [ "$status" -eq 0 ]
+  [ ! -f "$ENV_DIR/proxy.conf" ]
+  ! grep -q '# PROXY_SETTINGS' "$BASHRC"
+}
+
+@test "disable_env unsets uppercase systemctl env vars" {
+  local log="$BATS_TEST_TMPDIR/systemctl_calls.log"
+  cat > "$HOME/bin/systemctl" <<STUB
+#!/bin/bash
+echo "\$@" >> "$log"
+exit 0
+STUB
+  chmod +x "$HOME/bin/systemctl"
+
+  run disable_env
+  [ "$status" -eq 0 ]
+  grep -q 'HTTP_PROXY' "$log"
+  grep -q 'HTTPS_PROXY' "$log"
+  grep -q 'NO_PROXY' "$log"
+}
+
+# ---------------------------------------------------------------------------
+# write_wrapper
+# ---------------------------------------------------------------------------
+
+@test "write_wrapper fails when WRAPPER_SRC does not exist" {
+  export WRAPPER_SRC="/nonexistent/path/omarchy-proxy-browser"
+  run write_wrapper
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"wrapper source not found"* ]]
+}
+
+@test "write_wrapper copies source to WRAPPER_BIN" {
+  local src="$BATS_TEST_TMPDIR/fake_wrapper"
+  echo '#!/bin/bash' > "$src"
+  echo 'echo test' >> "$src"
+  export WRAPPER_SRC="$src"
+
+  run write_wrapper
+  [ "$status" -eq 0 ]
+  [ -f "$WRAPPER_BIN" ]
+  [ -x "$WRAPPER_BIN" ]
+  grep -q 'echo test' "$WRAPPER_BIN"
+}
