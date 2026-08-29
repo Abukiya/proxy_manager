@@ -1,10 +1,12 @@
-/* Allow abukiya to run proxy-sudoers-helper via pkexec without password. */
+/* Allow any user to run proxy-sudoers-helper via pkexec without password.
+   The helper only writes/removes /etc/sudoers.d/omarchy-proxy for proxy
+   env_keep — no other system state is touched. */
 polkit.addRule(function(action, subject) {
-    if (action.id == "org.freedesktop.policykit.exec" &&
-        subject.user == "abukiya") {
+    if (action.id == "org.freedesktop.policykit.exec") {
         var program = action.lookup("program");
         if (program &&
-            program.indexOf("proxy-sudoers-helper") !== -1) {
+            program.indexOf("proxy-sudoers-helper") !== -1 &&
+            program.indexOf("omarchy") !== -1) {
             return polkit.Result.YES;
         }
     }

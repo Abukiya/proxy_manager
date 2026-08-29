@@ -33,7 +33,10 @@ proxy_manager/
     BarWidget.qml         bar icon; left-click opens/closes the panel
     Panel.qml             enable/disable switch + integration status rows
     proxy-manager.sh      all the logic
+    proxy-sudoers-helper  pkexec helper for sudoers write/remove
     omarchy-proxy-browser standalone browser wrapper script
+  policy/
+    60-abukiya-proxy.rules  polkit rule for passwordless pacman proxy
   tests/
     proxy-manager.bats    bats test suite (54 tests)
   install.sh              (re)install: copy + enable
@@ -87,7 +90,7 @@ Config lives in `~/.config/omarchy/proxy.json`:
   "httpProxy": "http://192.168.1.1:8080",
   "httpsProxy": "http://192.168.1.1:8080",
   "noProxy": "localhost,127.0.0.1,::1",
-  "integrations": ["env", "git", "npm", "pip", "pacman", "browser", "vscode"],
+  "integrations": ["env", "git", "npm", "yarn", "pip", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
   "enabled": true
