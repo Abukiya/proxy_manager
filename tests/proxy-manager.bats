@@ -21,7 +21,6 @@ setup() {
   export VSCODE_SETTINGS="$HOME/.config/Code/User/settings.json"
   export BROWSERS="chromium"
   export WRAPPER_BIN="$HOME/.local/bin/omarchy-proxy-browser"
-  export WRAPPER_SRC="/dev/null"
 
   # Stub git so it doesn't touch the real global config.
   mkdir -p "$HOME/bin"
@@ -64,6 +63,8 @@ BASHRC
     "$(dirname "$BATS_TEST_DIRNAME")/plugin/proxy-manager.sh" > "$func_file"
   # shellcheck disable=SC1090
   source "$func_file"
+  # Override WRAPPER_SRC after sourcing (the script reassigns it).
+  export WRAPPER_SRC="/dev/null"
 }
 
 # ---------------------------------------------------------------------------
@@ -94,6 +95,36 @@ EOF
   run get_port
   [ "$status" -eq 0 ]
   [ "$output" = "8080" ]
+}
+
+@test "get_port falls back to 8080 for non-numeric port" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "port": "abc" }
+EOF
+  run get_port
+  [ "$status" -eq 0 ]
+  [ "$output" = "8080" ]
+}
+
+@test "get_port falls back to 8080 for port out of range" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "port": 99999 }
+EOF
+  run get_port
+  [ "$status" -eq 0 ]
+  [ "$output" = "8080" ]
+}
+
+@test "get_port accepts valid port" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "port": 3128 }
+EOF
+  run get_port
+  [ "$status" -eq 0 ]
+  [ "$output" = "3128" ]
 }
 
 # ---------------------------------------------------------------------------

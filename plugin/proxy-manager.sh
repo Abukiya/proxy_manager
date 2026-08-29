@@ -20,8 +20,14 @@ USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
 
 get_port() {
+  local port
   if [[ -f "$CONFIG_FILE" ]]; then
-    jq -r '.port // 8080' "$CONFIG_FILE"
+    port=$(jq -r '.port // 8080' "$CONFIG_FILE")
+  else
+    port=8080
+  fi
+  if [[ "$port" =~ ^[0-9]+$ ]] && [ "$port" -ge 1 ] && [ "$port" -le 65535 ]; then
+    echo "$port"
   else
     echo "8080"
   fi
@@ -251,7 +257,7 @@ enable_pacman() {
   if PACMAN_SUDOERS_EXISTS; then
     return 0
   fi
-  local body='Defaults env_keep += "http_proxy https_proxy ftp_proxy no_proxy all_proxy"'
+  local body='Defaults env_keep += "http_proxy https_proxy no_proxy"'
   if command -v pkexec >/dev/null 2>&1; then
     if printf '%s\n' "$body" | pkexec sh -c "cat > '$PACMAN_SUDOERS' && chmod 440 '$PACMAN_SUDOERS'" 2>/dev/null; then
       : > "$PACMAN_MARKER"
