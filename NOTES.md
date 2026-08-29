@@ -21,8 +21,9 @@ UI is two QML files that call the same IPC commands you'd run by hand.
     Panel.qml                     enable/disable switch + status rows
     proxy-manager.sh              all the logic
     omarchy-proxy-browser         standalone browser wrapper script
+    nm-dispatcher-proxy           NM dispatcher for connection events
   tests/
-    proxy-manager.bats            bats test suite (54 tests)
+    proxy-manager.bats            bats test suite (60 tests)
   install.sh                      (re)install: copy + enable
   sync.sh                         re-sync plugin/ to the live dir after edits
   docs/                           notes + sample config
@@ -45,7 +46,11 @@ The plugin's live config/state lives outside the repo:
 - `~/.local/share/applications/*.desktop` — browser launcher overrides (+ `.orig`)
 - `~/.local/bin/omarchy-proxy-browser` + `omarchy-proxy-*` — browser wrappers
 - `~/.config/hotspot-proxy/gateway` — live gateway state file (full URL with port)
+- `~/.config/hotspot-proxy/gateway-watcher.sh` — polling watcher script
+- `~/.config/hotspot-proxy/gateway-watcher.pid` — watcher PID file
+- `~/.config/hotspot-proxy/live-status.json` — status JSON for bar widget
 - `/etc/sudoers.d/omarchy-proxy` — pacman/yay env_keep (via pkexec)
+- `/etc/NetworkManager/dispatcher.d/99-proxy-gateway` — NM dispatcher (optional, needs sudo)
 
 ## What enable/disable touch
 
@@ -77,6 +82,40 @@ omarchy-shell abukiya.proxy toggle
 
 Gateway is auto-detected on every enable (`gatewayAuto: true`), so it follows
 the hotspot even when the phone's IP changes.
+
+## Gateway auto-detection
+
+When the phone hotspot IP changes, the proxy re-applies automatically:
+
+1. **Watcher** (`gateway-watcher.sh`) polls `ip route` every 5 seconds
+2. Detects new gateway → calls `gateway-change` on `proxy-manager.sh`
+3. `gateway-change` updates `proxy.json`, re-applies all integrations (except
+   pacman — its sudoers rule is static), writes `live-status.json`
+4. Watcher calls `omarchy-shell abukiya.proxy enable` through IPC to refresh
+   Service.qml's `cachedStatus` so the bar widget and panel update
+5. Desktop notification sent via `notify-send -a omarchy-action`
+
+The watcher starts on `enable` and stops on `disable`. It's idempotent —
+calling `enable` when the watcher is already running doesn't kill it.
+
+**How the IPC cache stays fresh:** The watcher calls `enable` through IPC
+after `gateway-change`. This runs the full enable path through Service.qml's
+command queue, which updates `cachedStatus`. The bar widget polls this cache
+every 3 seconds. `start_watcher` checks if a watcher is already running
+before killing and restarting, so the IPC call from inside the watcher
+doesn't kill itself.
+
+**What auto-updates without restart:** git, pip, env/.bashrc, new terminal
+sessions, new browser windows (wrapper reads live gateway).
+
+**Still needs manual restart:** VS Code, npm (cache proxy at startup).
+
+### NetworkManager dispatcher
+
+`nm-dispatcher-proxy` is installed to `/etc/NetworkManager/dispatcher.d/`
+(needs `sudo ./install.sh`). Fires on `up` events (initial connection).
+For mid-connection gateway changes (DHCP renewals), the polling watcher
+handles detection. The dispatcher is a fallback, not the primary mechanism.
 
 ## Gotchas / bugs we hit (important)
 
@@ -133,6 +172,20 @@ the hotspot even when the phone's IP changes.
    `running: true` on the poll timer (the first-party SystemUpdate widget sets
    it too).
 
+9. **`ip monitor route` needs root** — as a regular user, `ip monitor route`
+   produces no output (needs CAP_NET_ADMIN). The gateway watcher uses polling
+   (`ip route` every 5s) instead of netlink events.
+
+10. **Watcher must not kill itself** — when the watcher calls `enable` through
+    IPC to refresh the cache, `start_watcher` would kill the running watcher.
+    Fix: `start_watcher` checks if a watcher PID is already alive before
+    killing and restarting.
+
+11. **QML FileView/Timer file polling unreliable** — `FileView { watchChanges }`
+    and `Timer` + `Process { cat file }` both failed to reliably detect file
+    changes in this QML environment. The watcher instead calls `enable`
+    through IPC to update the cache directly.
+
 ## Side effects if you remove it
 
 `omarchy plugin disable` (or deleting the plugin) does NOT revert anything —
@@ -149,11 +202,15 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
 
 - **All integrations working:** env, bashrc, git, npm, yarn, pip, vscode,
   browser, pacman (needs one-time pkexec auth to create the sudoers file).
+- **Gateway auto-detection:** background watcher polls `ip route` every 5s,
+  detects gateway changes, re-applies all integrations, notifies the user.
+  Watcher starts on enable, stops on disable, is idempotent.
 - **Configurable port:** `proxy.json` supports a `port` field (default 8080,
   validated 1-65535). Gateway state file stores full URL including port.
-- **54 bats tests:** cover all functions — config management, every
-  enable/disable integration, the browser wrapper standalone script, and
-  end-to-end status output. Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.
+- **60 bats tests:** cover all functions — config management, every
+  enable/disable integration, the browser wrapper standalone script,
+  end-to-end status output, and gateway-change command.
+  Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.
 - **Browser wrapper extracted:** standalone `omarchy-proxy-browser` file instead
   of inline heredoc. write_wrapper() copies the file, with a guard for missing
   source.
@@ -164,6 +221,7 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   - `get_port` validates port is numeric 1-65535
   - Pacman sudoers cleaned of unused `ftp_proxy`/`all_proxy`
   - Browser wrapper strips whitespace from gateway state file
+  - `enable_pacman` trusts the marker file (no pkexec if already created)
 - **Known issue:** `refresh_gateway_urls` — jq's `//` operator treats `false`
   as falsy, so `gatewayAuto: false` is ignored (always refreshes). Documented
   in test 47.

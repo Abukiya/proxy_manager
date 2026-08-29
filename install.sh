@@ -49,6 +49,23 @@ if [[ -f "$RULES_SRC" ]]; then
   fi
 fi
 
+# Install NetworkManager dispatcher for automatic gateway-change detection.
+DISPATCHER_SRC="$PLUGIN_DIR/nm-dispatcher-proxy"
+DISPATCHER_DST="/etc/NetworkManager/dispatcher.d/99-proxy-gateway"
+if [[ -f "$DISPATCHER_SRC" ]]; then
+  if [[ -w "/etc/NetworkManager/dispatcher.d/" ]]; then
+    cp "$DISPATCHER_SRC" "$DISPATCHER_DST"
+    chmod 755 "$DISPATCHER_DST"
+    echo "installed: NM dispatcher (auto gateway-change detection)"
+    # Restart the dispatcher to pick up the new script.
+    systemctl restart NetworkManager-dispatcher.service 2>/dev/null || true
+  else
+    echo "note: to enable auto gateway-change detection, run with sudo:"
+    echo "  sudo cp $DISPATCHER_SRC $DISPATCHER_DST"
+    echo "  sudo chmod 755 $DISPATCHER_DST"
+  fi
+fi
+
 echo
 echo "Done. Verify with:"
 echo "  omarchy-shell abukiya.proxy status"

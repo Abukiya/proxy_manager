@@ -917,11 +917,149 @@ FAKE
   chmod +x "$HOME/bin/chromium"
   export PATH="$HOME/bin:$PATH"
 
-  local wrapper="$BATS_TEST_TMPDIR/omarchy-proxy-browser"
+  local wrapper="$BATS_TEST_TMPDIR/omarchy-proxy-chromium"
   cp "$(dirname "$BATS_TEST_DIRNAME")/plugin/omarchy-proxy-browser" "$wrapper"
   chmod +x "$wrapper"
 
   run "$wrapper"
   [ "$status" -eq 0 ]
   [[ "$output" == *"chromium called"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# cmd_gateway_change
+# ---------------------------------------------------------------------------
+
+@test "cmd_gateway_change returns no-change when proxy is disabled" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://old:8080",
+  "enabled": false
+}
+EOF
+  cat > "$HOME/bin/ip" <<'STUB'
+#!/bin/bash
+echo "default via 10.0.0.2 dev eth0"
+STUB
+  chmod +x "$HOME/bin/ip"
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  local changed
+  changed=$(echo "$output" | jq -r '.gatewayChanged')
+  [ "$changed" = "false" ]
+}
+
+@test "cmd_gateway_change returns no-change when gateway is the same" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://10.0.0.1:8080",
+  "enabled": true,
+  "integrations": []
+}
+EOF
+  cat > "$HOME/bin/ip" <<'STUB'
+#!/bin/bash
+echo "default via 10.0.0.1 dev eth0"
+STUB
+  chmod +x "$HOME/bin/ip"
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  local changed
+  changed=$(echo "$output" | jq -r '.gatewayChanged')
+  [ "$changed" = "false" ]
+}
+
+@test "cmd_gateway_change detects change and updates config" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://10.0.0.1:8080",
+  "httpsProxy": "http://10.0.0.1:8080",
+  "enabled": true,
+  "integrations": []
+}
+EOF
+  cat > "$HOME/bin/ip" <<'STUB'
+#!/bin/bash
+echo "default via 10.0.0.99 dev eth0"
+STUB
+  chmod +x "$HOME/bin/ip"
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  local changed
+  changed=$(echo "$output" | jq -r '.gatewayChanged')
+  [ "$changed" = "true" ]
+  # Config should be updated.
+  local proxy
+  proxy=$(jq -r '.httpProxy' "$CONFIG_FILE")
+  [ "$proxy" = "http://10.0.0.99:8080" ]
+}
+
+@test "cmd_gateway_change writes gateway state file for browser wrapper" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://10.0.0.1:8080",
+  "enabled": true,
+  "integrations": []
+}
+EOF
+  cat > "$HOME/bin/ip" <<'STUB'
+#!/bin/bash
+echo "default via 10.0.0.99 dev eth0"
+STUB
+  chmod +x "$HOME/bin/ip"
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  [ -f "$STATE_DIR/gateway" ]
+  local gw
+  gw=$(cat "$STATE_DIR/gateway")
+  [ "$gw" = "http://10.0.0.99:8080" ]
+}
+
+@test "cmd_gateway_change reports old and new gateway URLs" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://10.0.0.1:8080",
+  "enabled": true,
+  "integrations": []
+}
+EOF
+  cat > "$HOME/bin/ip" <<'STUB'
+#!/bin/bash
+echo "default via 10.0.0.99 dev eth0"
+STUB
+  chmod +x "$HOME/bin/ip"
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  local old new
+  old=$(echo "$output" | jq -r '.old')
+  new=$(echo "$output" | jq -r '.new')
+  [ "$old" = "http://10.0.0.1:8080" ]
+  [ "$new" = "http://10.0.0.99:8080" ]
+}
+
+@test "cmd_gateway_change returns enabled=false when proxy was disabled" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$STATE_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://10.0.0.1:8080",
+  "enabled": false,
+  "integrations": []
+}
+EOF
+
+  run cmd_gateway_change
+  [ "$status" -eq 0 ]
+  local enabled
+  enabled=$(echo "$output" | jq -r '.enabled')
+  [ "$enabled" = "false" ]
 }

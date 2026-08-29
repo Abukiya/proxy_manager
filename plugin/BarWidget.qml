@@ -3,13 +3,6 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// Bar icon for the proxy manager. Reflects the current proxy state; clicking
-// only opens/closes the panel — the proxy is toggled from the switch inside
-// the panel, never from the icon.
-//   left-click -> toggles the host panel open/closed (exactly like the sibling
-//                 panel+widget plugins route `shell toggle <id>`).
-// State is polled through the existing `abukiya.proxy status` IPC, which lags
-// the real state by ~2s; the panel owns the optimistic "applying" state.
 BarWidget {
   id: root
   moduleName: "abukiya.proxy"

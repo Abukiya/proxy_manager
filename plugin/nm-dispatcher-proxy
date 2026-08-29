@@ -1,0 +1,81 @@
+#!/bin/bash
+# NetworkManager dispatcher script for abukiya.proxy.
+#
+# Installed to /etc/NetworkManager/dispatcher.d/ (runs as root).
+# Detects gateway changes on connection events and re-applies proxy settings.
+#
+# For mid-connection gateway changes (DHCP renewals), the proxy-manager's
+# built-in gateway-watcher handles detection via `ip monitor route`.
+#
+# $1 = interface name
+# $2 = action (up, down, connectivity-change, etc.)
+
+INTERFACE="$1"
+ACTION="$2"
+
+# Only act on "up" (connection established) events.
+case "$ACTION" in
+  up) ;;
+  *) exit 0 ;;
+esac
+
+# Find a logged-in desktop user (NM dispatcher runs as root).
+TARGET_USER=""
+TARGET_HOME=""
+TARGET_UID=""
+for uid_dir in /run/user/*; do
+  uid=$(basename "$uid_dir")
+  if [[ "$uid" =~ ^[0-9]+$ ]] && [[ "$uid" -ge 1000 ]]; then
+    user_info=$(getent passwd "$uid" 2>/dev/null) || continue
+    TARGET_USER=$(echo "$user_info" | cut -d: -f1)
+    TARGET_HOME=$(echo "$user_info" | cut -d: -f6)
+    TARGET_UID="$uid"
+    break
+  fi
+done
+
+[[ -n "$TARGET_USER" ]] || exit 0
+
+# Find the proxy-manager script.
+PROXY_MANAGER=""
+for candidate in \
+  "$TARGET_HOME/.config/omarchy/plugins/abukiya.proxy/proxy-manager.sh" \
+  /home/*/.config/omarchy/plugins/abukiya.proxy/proxy-manager.sh; do
+  if [[ -f "$candidate" ]]; then
+    PROXY_MANAGER="$candidate"
+    break
+  fi
+done
+
+[[ -n "$PROXY_MANAGER" ]] || exit 0
+
+# Run gateway-change as the desktop user.
+RESULT=$(su -s /bin/bash -c "HOME='$TARGET_HOME' bash '$PROXY_MANAGER' gateway-change" "$TARGET_USER" 2>/dev/null) || exit 0
+
+# Parse the result.
+changed=$(echo "$RESULT" | jq -r '.gatewayChanged // false' 2>/dev/null)
+[[ "$changed" == "true" ]] || exit 0
+
+new_gw=$(echo "$RESULT" | jq -r '.new // ""' 2>/dev/null)
+needs_restart=$(echo "$RESULT" | jq -r '.needsRestart // [] | join(", ")' 2>/dev/null)
+
+# Build notification body.
+body="Proxy re-applied to $new_gw"
+if [[ -n "$needs_restart" ]]; then
+  body="$body
+
+Restart these apps for full effect:
+$needs_restart"
+fi
+
+# Send desktop notification via the user's session bus.
+DBUS_ADDR="unix:path=/run/user/$TARGET_UID/bus"
+su -s /bin/bash -c "
+  export DBUS_SESSION_BUS_ADDRESS='$DBUS_ADDR'
+  export XDG_RUNTIME_DIR='/run/user/$TARGET_UID'
+  notify-send -a omarchy-action -i network-proxy \
+    'Gateway changed' \
+    '$body'
+" "$TARGET_USER" 2>/dev/null || true
+
+exit 0

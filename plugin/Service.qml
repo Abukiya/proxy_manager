@@ -5,7 +5,6 @@ import Quickshell.Io
 Item {
   id: root
 
-  // Injected by omarchy-shell (the service loader).
   property var shell: null
   property var manifest: null
 
@@ -13,7 +12,6 @@ Item {
     ? root.manifest.__sourceDir + "/proxy-manager.sh"
     : ""
 
-  // Last known status JSON, refreshed on load and after every command.
   property string cachedStatus: "{}"
   property bool busy: false
   property var commandQueue: []
@@ -24,8 +22,6 @@ Item {
 
   function runScript(args) {
     if (root.scriptPath === "") return
-    // Serialize: queue commands instead of dropping them when one is running,
-    // so rapid IPC calls (e.g. toggle then status) always apply in order.
     root.commandQueue.push(args)
     root.drainQueue()
   }
@@ -79,6 +75,11 @@ Item {
       } catch (e) {}
       root.runScript(enabled ? ["disable"] : ["enable"])
       return enabled ? "disabled" : "enabled"
+    }
+
+    function refresh(): string {
+      root.refreshStatus()
+      return "ok"
     }
   }
 

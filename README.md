@@ -23,6 +23,24 @@ On `enable`, sets the proxy (auto-detected gateway) for:
 
 `disable` reverts all of the above.
 
+## Gateway auto-detection
+
+When the phone hotspot IP changes, the proxy automatically re-applies to the
+new gateway without manual intervention:
+
+1. A **background watcher** polls `ip route` every 5 seconds
+2. When the default gateway changes, it calls `gateway-change`
+3. `gateway-change` updates the config, re-applies all integrations, and
+   sends a desktop notification
+4. The watcher then calls `enable` through IPC to refresh the bar widget
+   and panel status
+
+The watcher starts automatically on `enable` and stops on `disable`.
+
+**Still needs manual restart:** VS Code and npm cache proxy settings at
+startup. All other tools (git, pip, new terminal sessions, new browser
+windows) pick up the new gateway automatically.
+
 ## Layout
 
 ```
@@ -35,16 +53,18 @@ proxy_manager/
     proxy-manager.sh      all the logic
     proxy-sudoers-helper  pkexec helper for sudoers write/remove
     omarchy-proxy-browser standalone browser wrapper script
+    nm-dispatcher-proxy   NetworkManager dispatcher for connection events
   policy/
     60-abukiya-proxy.rules  polkit rule for passwordless pacman proxy
   tests/
-    proxy-manager.bats    bats test suite (54 tests)
+    proxy-manager.bats    bats test suite (60 tests)
   install.sh              (re)install: copy + enable
   sync.sh                 re-sync plugin/ to the live dir after edits
   docs/
     omarchy-menu.jsonc    note: menu integration removed (see file)
     proxy.json            sample config
   README.md
+  NOTES.md
 ```
 
 > The live plugin dir is a real **copy**, not a symlink. Qt QML refuses to
@@ -55,11 +75,15 @@ proxy_manager/
 ## Install
 
 ```sh
-./install.sh
+./install.sh           # normal install
+sudo ./install.sh      # also installs NM dispatcher for auto gateway detection
 ```
 
 This copies `plugin/` to `~/.config/omarchy/plugins/abukiya.proxy` (a real
-directory — see layout note above) and re-enables the plugin. Afterwards:
+directory — see layout note above) and re-enables the plugin. With `sudo`, it
+also installs the NetworkManager dispatcher script for connection events.
+
+Afterwards:
 
 ```sh
 omarchy-shell shell rescanPlugins
@@ -103,7 +127,7 @@ Config lives in `~/.config/omarchy/proxy.json`:
 
 ## Testing
 
-The project includes a bats test suite with 54 tests covering all functions:
+The project includes a bats test suite with 60 tests covering all functions:
 
 ```sh
 # Install bats if not present.
@@ -115,7 +139,8 @@ git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
 
 Tests use isolated temp directories and stub commands — no system state is
 modified. Coverage includes: config management, all integration enable/disable
-functions, the browser wrapper standalone script, and end-to-end status output.
+functions, the browser wrapper standalone script, end-to-end status output,
+and the gateway-change command.
 
 ## Removal
 

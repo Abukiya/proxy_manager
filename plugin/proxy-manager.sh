@@ -258,12 +258,9 @@ pacman_sudoers_exists() {
 }
 
 enable_pacman() {
+  # Fast path: marker says sudoers file exists, trust it.
   if [[ -f "$PACMAN_MARKER" ]]; then
-    # Verify the sudoers file actually exists (marker can desync if manually deleted).
-    if pkexec test -f "$PACMAN_SUDOERS" 2>/dev/null; then
-      return 0
-    fi
-    rm -f "$PACMAN_MARKER"
+    return 0
   fi
   if command -v pkexec >/dev/null 2>&1 && [[ -f "$SUDOERS_HELPER" ]]; then
     if pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
@@ -431,6 +428,180 @@ apply() {
   done
 }
 
+# Re-apply all integrations with the current config (used after gateway change).
+# Unlike the full `enable` path, this does NOT touch the enabled flag or
+# refresh gateway URLs — the caller already did that.
+# pacman is skipped: the sudoers env_keep rule is static and doesn't change
+# when the gateway IP changes.  Re-applying it would trigger a pkexec dialog.
+apply_current() {
+  for name in env git npm yarn pip browser vscode; do
+    if cfg_has_integration "$name"; then
+      "enable_${name}"
+    fi
+  done
+}
+
+# ------------------------------------------------------------- gateway-watcher
+
+WATCHER_PID_FILE="$STATE_DIR/gateway-watcher.pid"
+
+start_watcher() {
+  mkdir -p "$STATE_DIR"
+
+  # If a watcher is already running, don't kill and restart it.
+  if [[ -f "$WATCHER_PID_FILE" ]]; then
+    local old_pid
+    old_pid=$(cat "$WATCHER_PID_FILE")
+    if kill -0 "$old_pid" 2>/dev/null; then
+      return 0
+    fi
+    rm -f "$WATCHER_PID_FILE"
+  fi
+
+  cat > "$STATE_DIR/gateway-watcher.sh" <<'WATCHER'
+#!/bin/bash
+# Polls for default gateway changes every 5 seconds.
+# When the gateway changes and the proxy is enabled, re-applies all integrations.
+STATE_DIR="$HOME/.config/hotspot-proxy"
+CONFIG_FILE="$HOME/.config/omarchy/proxy.json"
+PM="$HOME/.config/omarchy/plugins/abukiya.proxy/proxy-manager.sh"
+
+last_gw=$(ip route 2>/dev/null | grep default | grep -v tun | grep -v tap | awk '{print $3}' | head -1)
+
+while true; do
+  sleep 5
+
+  enabled=$(jq -r '.enabled // false' "$CONFIG_FILE" 2>/dev/null)
+  [[ "$enabled" == "true" ]] || continue
+
+  new_gw=$(ip route 2>/dev/null | grep default | grep -v tun | grep -v tap | awk '{print $3}' | head -1)
+  [[ -n "$new_gw" ]] || continue
+  [[ "$new_gw" != "$last_gw" ]] || continue
+
+  last_gw="$new_gw"
+
+  # Re-apply proxy with the new gateway.
+  result=$(bash "$PM" gateway-change 2>/dev/null) || continue
+
+  changed=$(echo "$result" | jq -r '.gatewayChanged // false' 2>/dev/null)
+  [[ "$changed" == "true" ]] || continue
+
+  # Re-run enable through IPC so Service.qml's cachedStatus updates.
+  # gateway-change already applied everything; this just refreshes the cache.
+  omarchy-shell abukiya.proxy enable >/dev/null 2>&1 || true
+
+  new_url=$(echo "$result" | jq -r '.new // ""' 2>/dev/null)
+  needs_restart=$(echo "$result" | jq -r '.needsRestart // [] | join(", ")' 2>/dev/null)
+
+  body="Proxy re-applied to $new_url"
+  [[ -n "$needs_restart" ]] && body="$body
+
+Restart these apps for full effect:
+$needs_restart"
+
+  notify-send -a omarchy-action -i network-proxy \
+    "Gateway changed" "$body" 2>/dev/null || true
+
+  # Write the new status to a file so the bar widget can pick it up
+  # without going through the IPC cache.
+  bash "$PM" status > "$STATE_DIR/live-status.json"
+done
+WATCHER
+  chmod +x "$STATE_DIR/gateway-watcher.sh"
+
+  bash "$STATE_DIR/gateway-watcher.sh" &
+  echo $! > "$WATCHER_PID_FILE"
+}
+
+stop_watcher() {
+  if [[ -f "$WATCHER_PID_FILE" ]]; then
+    local pid
+    pid=$(cat "$WATCHER_PID_FILE")
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    rm -f "$WATCHER_PID_FILE"
+  fi
+  # Also kill any stale watchers by pattern.
+  pkill -f "gateway-watcher.sh" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------- gateway-change
+
+# Called by the NetworkManager dispatcher when the default gateway may have
+# changed.  Compares the detected gateway against the stored proxy URL; if
+# different and the proxy is enabled, re-applies all integrations and writes
+# the new gateway to the browser state file.
+#
+# Output JSON:
+#   { "gatewayChanged": bool, "old": "...", "new": "...",
+#     "needsRestart": [...], "enabled": bool }
+cmd_gateway_change() {
+  local new_gw old_gw enabled port
+  new_gw=$(detect_gateway_proxy)
+  enabled=$(cfg_get '.enabled // false')
+
+  if [[ "$enabled" != "true" ]]; then
+    echo '{"gatewayChanged":false,"old":"","new":"","needsRestart":[],"enabled":false}'
+    return 0
+  fi
+
+  old_gw=$(cfg_get '.httpProxy // empty')
+
+  if [[ "$new_gw" == "$old_gw" ]]; then
+    echo '{"gatewayChanged":false,"old":"'"$old_gw"'","new":"'"$new_gw"'","needsRestart":[],"enabled":true}'
+    return 0
+  fi
+
+  # Gateway changed — update config and re-apply everything.
+  read_config | jq --arg url "$new_gw" \
+    '.httpProxy = $url | .httpsProxy = $url' > "$CONFIG_FILE.tmp"
+  mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+
+  # Write the browser gateway state file so existing browser wrappers see
+  # the new URL on their next launch.
+  mkdir -p "$STATE_DIR"
+  echo "$new_gw" > "$STATE_DIR/gateway"
+
+  apply_current
+
+  # Determine which apps need a manual restart (they cache proxy at startup).
+  local needs_restart="[]"
+  local needs=""
+
+  if [[ -f "$VSCODE_SETTINGS" ]] && jq -e '."http.proxy" != null' "$VSCODE_SETTINGS" >/dev/null 2>&1; then
+    needs_restart='["vscode"]'
+    needs="VS Code"
+  fi
+
+  if command -v npm >/dev/null 2>&1 && [[ "$(npm config get proxy 2>/dev/null)" != "null" ]]; then
+    if [[ -n "$needs" ]]; then
+      needs="$needs, npm"
+      needs_restart=$(echo "$needs_restart" | jq '. + ["npm"]')
+    else
+      needs="npm"
+      needs_restart='["npm"]'
+    fi
+  fi
+
+  # Propagate to the running systemd user session immediately.
+  local http="$new_gw" https="$new_gw" no
+  no=$(cfg_get '.noProxy // empty')
+  systemctl --user set-environment \
+    http_proxy="$http" HTTP_PROXY="$http" \
+    https_proxy="$https" HTTPS_PROXY="$https" \
+    no_proxy="$no" NO_PROXY="$no" 2>/dev/null || true
+
+  local escaped_old escaped_new
+  escaped_old=$(printf '%s' "$old_gw" | sed 's/[&/\]/\\&/g')
+  escaped_new=$(printf '%s' "$new_gw" | sed 's/[&/\]/\\&/g')
+
+  printf '{"gatewayChanged":true,"old":"%s","new":"%s","needsRestart":%s,"enabled":true}\n' \
+    "$old_gw" "$new_gw" "$needs_restart"
+
+  # Write live status for the bar widget (bypasses IPC cache).
+  cmd_status > "$STATE_DIR/live-status.json"
+}
+
 case "${1:-status}" in
   status)
     cmd_status
@@ -439,15 +610,28 @@ case "${1:-status}" in
     refresh_gateway_urls
     apply enable
     set_enabled_flag true
-    cmd_status
+    start_watcher
+    mkdir -p "$STATE_DIR"
+    cmd_status | tee "$STATE_DIR/live-status.json"
     ;;
   disable)
+    stop_watcher
     apply disable
     set_enabled_flag false
-    cmd_status
+    mkdir -p "$STATE_DIR"
+    cmd_status | tee "$STATE_DIR/live-status.json"
+    ;;
+  gateway-change)
+    cmd_gateway_change
+    ;;
+  start-watcher)
+    start_watcher
+    ;;
+  stop-watcher)
+    stop_watcher
     ;;
   *)
-    echo "usage: proxy-manager.sh <status|enable|disable>" >&2
+    echo "usage: proxy-manager.sh <status|enable|disable|gateway-change|start-watcher|stop-watcher>" >&2
     exit 1
     ;;
 esac
