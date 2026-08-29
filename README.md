@@ -10,7 +10,7 @@ panel.
 On `enable`, sets the proxy (auto-detected gateway) for:
 
 - **env** — `~/.config/environment.d/proxy.conf` + a `# PROXY_SETTINGS` block
-  in `~/.bashrc` + `systemctl --user set-environment`
+  in `~/.bashrc` + `systemctl --user set-environment` (both upper and lower case)
 - **git** — global `http.proxy` / `https.proxy`
 - **npm** — `proxy`, `https-proxy`, `strict-ssl false`, `maxsockets 1`
 - **yarn** — `proxy`, `https-proxy` (if yarn installed)
@@ -33,6 +33,9 @@ proxy_manager/
     BarWidget.qml         bar icon; left-click opens/closes the panel
     Panel.qml             enable/disable switch + integration status rows
     proxy-manager.sh      all the logic
+    omarchy-proxy-browser standalone browser wrapper script
+  tests/
+    proxy-manager.bats    bats test suite (54 tests)
   install.sh              (re)install: copy + enable
   sync.sh                 re-sync plugin/ to the live dir after edits
   docs/
@@ -77,8 +80,39 @@ omarchy-shell abukiya.proxy disable
 omarchy-shell abukiya.proxy toggle
 ```
 
-Config lives in `~/.config/omarchy/proxy.json` (`gatewayAuto: true` re-detects
-the gateway on every enable).
+Config lives in `~/.config/omarchy/proxy.json`:
+
+```json
+{
+  "httpProxy": "http://192.168.1.1:8080",
+  "httpsProxy": "http://192.168.1.1:8080",
+  "noProxy": "localhost,127.0.0.1,::1",
+  "integrations": ["env", "git", "npm", "pip", "pacman", "browser", "vscode"],
+  "gatewayAuto": true,
+  "port": 8080,
+  "enabled": true
+}
+```
+
+- `gatewayAuto: true` re-detects the gateway on every enable.
+- `port` controls the proxy port (default `8080`). Must be 1-65535.
+- `integrations` controls which tools are configured.
+
+## Testing
+
+The project includes a bats test suite with 54 tests covering all functions:
+
+```sh
+# Install bats if not present.
+git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
+
+# Run all tests.
+/tmp/bats-core/bin/bats tests/proxy-manager.bats
+```
+
+Tests use isolated temp directories and stub commands — no system state is
+modified. Coverage includes: config management, all integration enable/disable
+functions, the browser wrapper standalone script, and end-to-end status output.
 
 ## Removal
 

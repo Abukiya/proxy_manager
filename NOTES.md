@@ -20,6 +20,9 @@ UI is two QML files that call the same IPC commands you'd run by hand.
     BarWidget.qml                 bar icon; click opens/closes the panel
     Panel.qml                     enable/disable switch + status rows
     proxy-manager.sh              all the logic
+    omarchy-proxy-browser         standalone browser wrapper script
+  tests/
+    proxy-manager.bats            bats test suite (54 tests)
   install.sh                      (re)install: copy + enable
   sync.sh                         re-sync plugin/ to the live dir after edits
   docs/                           notes + sample config
@@ -36,12 +39,12 @@ After editing files in `plugin/`, run `./sync.sh` to copy them over and
 hot-reload the shell.
 
 The plugin's live config/state lives outside the repo:
-- `~/.config/omarchy/proxy.json` — config (gatewayAuto, integrations, enabled)
+- `~/.config/omarchy/proxy.json` — config (gatewayAuto, integrations, port, enabled)
 - `~/.bashrc` — `# PROXY_SETTINGS` block
 - `~/.config/environment.d/proxy.conf` — env vars for systemd user services
 - `~/.local/share/applications/*.desktop` — browser launcher overrides (+ `.orig`)
 - `~/.local/bin/omarchy-proxy-browser` + `omarchy-proxy-*` — browser wrappers
-- `~/.config/hotspot-proxy/gateway` — live gateway state file
+- `~/.config/hotspot-proxy/gateway` — live gateway state file (full URL with port)
 - `/etc/sudoers.d/omarchy-proxy` — pacman/yay env_keep (via pkexec)
 
 ## What enable/disable touch
@@ -144,10 +147,25 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
 
 ## Current state
 
-- Working: env, bashrc, git, npm, pip, vscode, browser, pacman (needs one-time
-  pkexec auth to create the sudoers file).
-- Verified end-to-end: IPC commands, browser keybind launch, menu→install
-  (after the .bashrc fix), and the new UI (bar widget loads, panel opens/closes,
-  service status IPC round-trips).
+- **All integrations working:** env, bashrc, git, npm, yarn, pip, vscode,
+  browser, pacman (needs one-time pkexec auth to create the sudoers file).
+- **Configurable port:** `proxy.json` supports a `port` field (default 8080,
+  validated 1-65535). Gateway state file stores full URL including port.
+- **54 bats tests:** cover all functions — config management, every
+  enable/disable integration, the browser wrapper standalone script, and
+  end-to-end status output. Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.
+- **Browser wrapper extracted:** standalone `omarchy-proxy-browser` file instead
+  of inline heredoc. write_wrapper() copies the file, with a guard for missing
+  source.
+- **Bug fixes applied:**
+  - `disable_npm` now cleans up `strict-ssl` and `maxsockets`
+  - `systemctl set-environment` propagates both upper and lowercase env vars
+  - `pip.conf` enable no longer creates duplicate `[global]` sections
+  - `get_port` validates port is numeric 1-65535
+  - Pacman sudoers cleaned of unused `ftp_proxy`/`all_proxy`
+  - Browser wrapper strips whitespace from gateway state file
+- **Known issue:** `refresh_gateway_urls` — jq's `//` operator treats `false`
+  as falsy, so `gatewayAuto: false` is ignored (always refreshes). Documented
+  in test 47.
 - The plugin lives in a git repo (`~/proxy_manager`), copied into omarchy's
   plugin dir and kept in sync with `./sync.sh`.
