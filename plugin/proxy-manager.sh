@@ -19,13 +19,22 @@ STATE_DIR="$HOME/.config/hotspot-proxy"
 USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
 
-detect_gateway_proxy() {
-  local gw
-  gw=$(ip route 2>/dev/null | grep default | grep -v tun | grep -v tap | awk '{print $3}' | head -1)
-  if [[ -n $gw ]]; then
-    echo "http://$gw:8080"
+get_port() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    jq -r '.port // 8080' "$CONFIG_FILE"
   else
-    echo "http://127.0.0.1:7890"
+    echo "8080"
+  fi
+}
+
+detect_gateway_proxy() {
+  local gw port
+  gw=$(ip route 2>/dev/null | grep default | grep -v tun | grep -v tap | awk '{print $3}' | head -1)
+  port=$(get_port)
+  if [[ -n $gw ]]; then
+    echo "http://$gw:$port"
+  else
+    echo "http://127.0.0.1:$port"
   fi
 }
 
@@ -48,6 +57,7 @@ read_config() {
   "noProxy": "localhost,127.0.0.1,::1",
   "integrations": ["env", "git", "npm", "pip", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
+  "port": 8080,
   "enabled": $enabled
 }
 EOF
@@ -303,7 +313,7 @@ command -v "$BIN" >/dev/null 2>&1 || BIN="chromium"
 
 if [[ -f "$STATE_FILE" ]]; then
   GW=$(cat "$STATE_FILE")
-  exec "$BIN" --proxy-server="http://$GW:8080" "$@"
+  exec "$BIN" --proxy-server="$GW" "$@"
 else
   exec "$BIN" "$@"
 fi
@@ -328,14 +338,14 @@ route_launcher() {
 }
 
 enable_browser() {
-  local gw
-  gw=$(ip route 2>/dev/null | grep default | grep -v tun | grep -v tap | awk '{print $3}' | head -1)
-  [[ -n $gw ]] || return 0
+  local url
+  url=$(cfg_get '.httpProxy // empty')
+  [[ -n $url ]] || return 0
 
   write_wrapper
   ensure_wrapper_links
   mkdir -p "$STATE_DIR"
-  echo "$gw" > "$STATE_DIR/gateway"
+  echo "$url" > "$STATE_DIR/gateway"
 
   for name in $BROWSERS; do
     local sys_desktop="/usr/share/applications/${name}.desktop"
