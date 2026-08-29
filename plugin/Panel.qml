@@ -29,16 +29,15 @@ Item {
 
   // ------------------------------------------------------------------ style
 
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color border: Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Color.menu.scrim
+  property color background: Color.popups.background
+  property color foreground: Color.popups.text
+  property color border: Color.popups.border
+  property var borderSpec: Border.surfaceSpec("popups", "border", border, Math.max(1, Style.space(2)))
   property color accent: Color.accent
   readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property color dimmer: Qt.darker(foreground, 1.8)
   readonly property int cornerRadius: Style.cornerRadius
-  property string fontFamily: Style.font.menuFamily
+  property string fontFamily: Style.font.family
   // Slightly roomier than the stock panel padding so the card doesn't feel
   // cramped; the main column below breathes on Style.spacing.md per element.
   property int contentMargin: Math.max(Style.spacing.panelPadding, Style.space(20))
@@ -56,13 +55,26 @@ Item {
   // authoritative enabled flag from the latest status snapshot.
   property bool displayEnabled: false
 
+  // Error feedback: shown in the hero meta when a toggle fails or times out.
+  property string lastError: ""
+
   // Safety net: if no snapshot converges on the target (command failed, status
-  // unavailable), stop showing "applying" and render whatever is known.
+  // unavailable), stop showing "applying" and surface an error to the user.
   property Timer pendingGuard: Timer {
     interval: 8000
     onTriggered: {
       root.pending = false
+      root.lastError = root.targetEnabled
+        ? "Failed to enable proxy"
+        : "Failed to disable proxy"
+      errorClearTimer.restart()
     }
+  }
+
+  // Auto-clear the error message after a few seconds.
+  property Timer errorClearTimer: Timer {
+    interval: 5000
+    onTriggered: root.lastError = ""
   }
 
   readonly property var integrationList: [
@@ -79,6 +91,26 @@ Item {
     return root.status && root.status.active ? root.status.active[key] === true : false
   }
 
+  // Compute the endpoint display text. When httpProxy and httpsProxy differ
+  // (rare but possible with manual config), show both on separate lines.
+  readonly property string endpointText: {
+    if (!root.status) return "Reading\u2026"
+    var http = root.status.httpProxy || ""
+    var https = root.status.httpsProxy || ""
+    if (!http && !https) {
+      return root.displayEnabled
+        ? "Gateway not detected"
+        : "No gateway configured"
+    }
+    if (http === https) return http
+    return http + "\n" + https
+  }
+
+  readonly property bool endpointHasValue: {
+    if (!root.status) return false
+    return !!(root.status.httpProxy || root.status.httpsProxy)
+  }
+
   function parseStatus(raw) {
     var obj = null
     try { obj = JSON.parse(String(raw || "").trim()) } catch (e) {}
@@ -88,6 +120,8 @@ Item {
       if (obj.enabled === root.targetEnabled) {
         root.pending = false
         root.pendingGuard.stop()
+        root.lastError = ""
+        errorClearTimer.stop()
         root.displayEnabled = obj.enabled === true
       }
       // else: snapshot still reflects the pre-toggle state; keep showing the
@@ -110,6 +144,8 @@ Item {
 
   function setTarget(next) {
     if (root.pending) return
+    root.lastError = ""
+    errorClearTimer.stop()
     root.targetEnabled = next
     root.pending = true
     root.displayEnabled = next
@@ -178,11 +214,6 @@ Item {
     WlrLayershell.keyboardFocus: root.opened ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
-    Rectangle {
-      anchors.fill: parent
-      color: root.scrim
-    }
-
     MouseArea {
       anchors.fill: parent
       onClicked: root.close()
@@ -190,23 +221,33 @@ Item {
 
     BorderSurface {
       id: card
+      anchors.right: parent.right
+      anchors.top: parent.top
+      anchors.rightMargin: Style.gapsOut
+      anchors.topMargin: Style.bar.sizeHorizontal + Style.gapsOut
       // Fixed-ish card; only clamps when the screen is genuinely small.
       width: Math.min(Style.space(400), panel.width - Style.gapsOut * 2)
       height: Math.min(contentCol.implicitHeight + card.contentTopInset + card.contentBottomInset,
                        panel.height - Style.gapsOut * 2)
-      anchors.centerIn: parent
       radius: root.cornerRadius
       color: root.background
       borderSpec: root.borderSpec
       padding: root.contentMargin
       clip: true
 
-      // Keep the card itself from being a click-through to the scrim.
+      // Keep the card itself from being a click-through to the dismiss overlay.
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       PanelKeyCatcher {
         id: keyCatcher
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: root.contentMargin
+        anchors.rightMargin: root.contentMargin
+        anchors.topMargin: root.contentMargin
+        anchors.bottomMargin: root.contentMargin
         onCloseRequested: root.close()
         onTextKey: function(t) {
           if (t === "q" || t === "Q") root.close()
@@ -233,7 +274,8 @@ Item {
             readonly property bool toggleBusy: root.pending
             readonly property color iconColor: root.displayEnabled ? root.accent : root.dim
             readonly property color accent: root.accent
-            readonly property string toggleTip: root.pending ? "Applying\u2026"
+            readonly property string toggleTip: root.lastError ? root.lastError
+              : root.pending ? "Applying\u2026"
               : (root.displayEnabled ? "Disable proxy" : "Enable proxy")
             function requestToggle() { root.setTarget(!root.displayEnabled) }
 
@@ -241,7 +283,8 @@ Item {
               id: hero
               width: parent.width
               title: "Proxy"
-              meta: root.pending ? "Applying\u2026"
+              meta: root.lastError ? root.lastError
+                : root.pending ? "Applying\u2026"
                 : (root.displayEnabled ? "Enabled" : "Disabled")
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -302,7 +345,8 @@ Item {
             }
 
             // The address in a pill, eliding the middle so a long
-            // phone-hotspot URL keeps its recognizable tail.
+            // phone-hotspot URL keeps its recognizable tail. When httpProxy
+            // and httpsProxy differ, both are shown on separate lines.
             BorderSurface {
               id: epChip
               anchors.right: parent.right
@@ -319,10 +363,11 @@ Item {
                 anchors.centerIn: parent
                 width: parent.width - Style.space(14)
                 horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WrapAnywhere
+                maximumLineCount: 2
                 elide: Text.ElideMiddle
-                text: root.status && root.status.httpProxy ? root.status.httpProxy
-                  : (root.status ? "Not configured" : "Reading\u2026")
-                color: root.status && root.status.httpProxy ? root.foreground : root.dimmer
+                text: root.endpointText
+                color: root.endpointHasValue ? root.foreground : root.dimmer
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -340,9 +385,21 @@ Item {
             fontFamily: root.fontFamily
           }
 
+          // Show a loading placeholder until the first status snapshot arrives,
+          // so the user doesn't see all-OFF and think integrations are broken.
+          Text {
+            width: parent.width
+            visible: root.status === null
+            text: "Reading\u2026"
+            color: root.dimmer
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+          }
+
           Column {
             width: parent.width
             spacing: Style.spacing.md
+            visible: root.status !== null
 
             Repeater {
               model: root.integrationList
@@ -353,6 +410,20 @@ Item {
                 implicitHeight: Math.max(integLabel.implicitHeight, integPill.implicitHeight)
 
                 readonly property bool active: root.integrationActive(modelData.key)
+                readonly property bool configured: {
+                  if (!root.status || !root.status.integrations) return false
+                  return root.status.integrations.indexOf(modelData.key) !== -1
+                }
+                readonly property string integTip: !root.status ? "Loading\u2026"
+                  : root.displayEnabled
+                    ? (active ? modelData.label + " is active" : modelData.label + " failed to configure")
+                    : (configured ? "Enable proxy to activate " + modelData.label : modelData.label + " not in integrations list")
+
+                MouseArea {
+                  id: integHover
+                  anchors.fill: parent
+                  hoverEnabled: true
+                }
 
                 Text {
                   id: integLabel
@@ -365,7 +436,8 @@ Item {
                 }
 
                 // ON/OFF as a small pill: accent-tinted when the integration
-                // is active, dim when not.
+                // is active, dim when not. Tooltip clarifies this is a
+                // read-only indicator managed by the main proxy toggle.
                 BorderSurface {
                   id: integPill
                   anchors.right: parent.right
@@ -386,6 +458,12 @@ Item {
                     font.bold: true
                     font.letterSpacing: 1.0
                   }
+
+                  PanelToolTip {
+                    visible: integHover.containsMouse
+                    text: parent.parent.integTip
+                    fontFamily: root.fontFamily
+                  }
                 }
               }
             }
@@ -400,7 +478,7 @@ Item {
               anchors.left: parent.left
               text: root.status === null ? "Reading status\u2026" : "status via abukiya.proxy"
               color: root.dim
-              opacity: 0.6
+              opacity: 0.35
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
@@ -409,7 +487,7 @@ Item {
               anchors.right: parent.right
               text: "esc close \u00b7 r refresh \u00b7 space toggle"
               color: root.dim
-              opacity: 0.6
+              opacity: 0.35
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }

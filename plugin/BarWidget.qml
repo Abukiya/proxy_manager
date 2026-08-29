@@ -15,6 +15,17 @@ BarWidget {
   moduleName: "abukiya.proxy"
 
   property bool proxyEnabled: false
+  property bool opened: false
+
+  function open() {
+    if (!root.bar) return
+    root.bar.run("omarchy-shell shell toggle abukiya.proxy")
+  }
+
+  function close() {
+    if (!root.bar || !root.opened) return
+    root.bar.run("omarchy-shell shell toggle abukiya.proxy")
+  }
 
   function refresh() {
     statusProc.running = true
@@ -60,17 +71,13 @@ BarWidget {
     tooltipText: root.proxyEnabled
       ? "Proxy on \u2014 click to open the panel"
       : "Proxy off \u2014 click to open the panel"
-    foreground: Qt.darker(Color.accent, 1.6)
-    activeColor: Color.accent
+    activeColor: bar ? bar.barForeground : Color.foreground
     active: root.iconActive
     fixedWidth: root.bar && root.bar.vertical ? -1 : Style.space(27)
     fixedHeight: root.bar && root.bar.vertical ? Style.space(26) : -1
     onPressed: function(b) {
       if (b !== 1) return
-      if (!root.bar) return
-      // Open/close the panel surface only. Proxy state is changed from the
-      // panel's toggle switch (via `abukiya.proxy enable|disable` IPC).
-      root.bar.run("omarchy-shell shell toggle abukiya.proxy")
+      root.open()
     }
   }
 }
