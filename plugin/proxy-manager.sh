@@ -18,6 +18,7 @@ BASHRC="$HOME/.bashrc"
 STATE_DIR="$HOME/.config/hotspot-proxy"
 USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
+SUDOERS_HELPER="$(dirname "$(readlink -f "$0")")/proxy-sudoers-helper"
 
 get_port() {
   local port
@@ -241,25 +242,14 @@ disable_pip() {
 PACMAN_MARKER="$STATE_DIR/pacman-sudoers"
 
 PACMAN_SUDOERS_EXISTS() {
-  if [[ -f "$PACMAN_MARKER" ]]; then
-    return 0
-  fi
-  # One-time probe: confirm the rule is really present and remember it so
-  # later status calls are instant and context-independent.
-  if timeout 5 pkexec sh -c 'test -f /etc/sudoers.d/omarchy-proxy' >/dev/null 2>&1; then
-    : > "$PACMAN_MARKER"
-    return 0
-  fi
-  return 1
+  [[ -f "$PACMAN_MARKER" ]]
 }
 
 enable_pacman() {
-  if PACMAN_SUDOERS_EXISTS; then
-    return 0
-  fi
-  local body='Defaults env_keep += "http_proxy https_proxy no_proxy"'
-  if command -v pkexec >/dev/null 2>&1; then
-    if printf '%s\n' "$body" | pkexec sh -c "cat > '$PACMAN_SUDOERS' && chmod 440 '$PACMAN_SUDOERS'" 2>/dev/null; then
+  # Skip if already configured (marker file present).
+  [[ -f "$PACMAN_MARKER" ]] && return 0
+  if command -v pkexec >/dev/null 2>&1 && [[ -f "$SUDOERS_HELPER" ]]; then
+    if pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
       : > "$PACMAN_MARKER"
     else
       echo "warning: could not write $PACMAN_SUDOERS (needs pkexec auth)"
@@ -270,8 +260,9 @@ enable_pacman() {
 }
 
 disable_pacman() {
-  if PACMAN_SUDOERS_EXISTS; then
-    if pkexec rm -f "$PACMAN_SUDOERS" 2>/dev/null; then
+  # Only attempt removal if we know the file exists (marker present).
+  if [[ -f "$PACMAN_MARKER" ]]; then
+    if pkexec "$SUDOERS_HELPER" remove 2>/dev/null; then
       rm -f "$PACMAN_MARKER"
     else
       echo "warning: could not remove $PACMAN_SUDOERS (needs pkexec auth)"

@@ -1,0 +1,26 @@
+#!/bin/bash
+# abukiya.proxy pkexec helper: writes or removes the pacman proxy sudoers file.
+# Called via pkexec with a specific polkit action for passwordless auth.
+#
+# Usage: proxy-sudoers-helper write|remove
+
+set -euo pipefail
+
+SUDOERS_FILE="/etc/sudoers.d/omarchy-proxy"
+ACTION="${1:-}"
+
+case "$ACTION" in
+  write)
+    cat > "$SUDOERS_FILE" <<'EOF'
+Defaults env_keep += "http_proxy https_proxy no_proxy"
+EOF
+    chmod 440 "$SUDOERS_FILE"
+    ;;
+  remove)
+    rm -f "$SUDOERS_FILE"
+    ;;
+  *)
+    echo "usage: proxy-sudoers-helper write|remove" >&2
+    exit 1
+    ;;
+esac
