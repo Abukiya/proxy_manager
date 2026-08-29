@@ -1,0 +1,11 @@
+/* Allow abukiya to run proxy-sudoers-helper via pkexec without password. */
+polkit.addRule(function(action, subject) {
+    if (action.id == "org.freedesktop.policykit.exec" &&
+        subject.user == "abukiya") {
+        var program = action.lookup("program");
+        if (program &&
+            program.indexOf("proxy-sudoers-helper") !== -1) {
+            return polkit.Result.YES;
+        }
+    }
+});

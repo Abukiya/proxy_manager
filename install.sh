@@ -36,6 +36,19 @@ fi
 
 omarchy-shell shell rescanPlugins 2>/dev/null || true
 
+# Install polkit rule for passwordless sudoers management (optional).
+RULES_SRC="$REPO_DIR/policy/60-abukiya-proxy.rules"
+RULES_DST="/etc/polkit-1/rules.d/60-abukiya-proxy.rules"
+if [[ -f "$RULES_SRC" ]]; then
+  if [[ -w "/etc/polkit-1/rules.d/" ]]; then
+    cp "$RULES_SRC" "$RULES_DST"
+    echo "installed: polkit rule (passwordless sudoers management)"
+  else
+    echo "note: to enable passwordless pacman proxy, run with sudo:"
+    echo "  sudo cp $RULES_SRC $RULES_DST"
+  fi
+fi
+
 echo
 echo "Done. Verify with:"
 echo "  omarchy-shell abukiya.proxy status"
