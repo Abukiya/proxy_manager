@@ -28,7 +28,7 @@ cp -a "$PLUGIN_DIR"/. "$LIVE_PLUGIN_DIR"/
 echo "installed: $LIVE_PLUGIN_DIR (real dir, copied from $PLUGIN_DIR)"
 
 # Enable the plugin if it isn't already.
-if ! grep -q '"id":"abukiya.proxy"' "$HOME/.config/omarchy/shell.json" 2>/dev/null; then
+if ! grep -q '"id"[[:space:]]*:[[:space:]]*"abukiya.proxy"' "$HOME/.config/omarchy/shell.json" 2>/dev/null; then
   omarchy plugin enable abukiya.proxy || echo "note: run 'omarchy plugin enable abukiya.proxy' manually"
 else
   echo "plugin already enabled in shell.json"
@@ -46,6 +46,23 @@ if [[ -f "$RULES_SRC" ]]; then
   else
     echo "note: to enable passwordless pacman proxy, run with sudo:"
     echo "  sudo cp $RULES_SRC $RULES_DST"
+  fi
+fi
+
+# Install root-owned system helper (preferred by proxy-manager.sh).
+# When present, pkexec runs /usr/local/bin/omarchy-proxy-sudoers-helper
+# which is not writable by the user, so tampering can't escalate to root.
+HELPER_SRC="$PLUGIN_DIR/proxy-sudoers-helper"
+HELPER_DST="/usr/local/bin/omarchy-proxy-sudoers-helper"
+if [[ -f "$HELPER_SRC" ]]; then
+  if [[ -w "/usr/local/bin" ]]; then
+    cp "$HELPER_SRC" "$HELPER_DST"
+    chmod 755 "$HELPER_DST"
+    chown root:root "$HELPER_DST" 2>/dev/null || true
+    echo "installed: system helper $HELPER_DST (root-owned)"
+  else
+    echo "note: to harden pacman helper (root-owned), run with sudo:"
+    echo "  sudo cp $HELPER_SRC $HELPER_DST && sudo chmod 755 $HELPER_DST"
   fi
 fi
 

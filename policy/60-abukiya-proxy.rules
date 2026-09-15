@@ -1,12 +1,34 @@
-/* Allow any user to run proxy-sudoers-helper via pkexec without password.
-   The helper only writes/removes /etc/sudoers.d/omarchy-proxy for proxy
-   env_keep — no other system state is touched. */
+/* Allow active local wheel users to run the proxy sudoers helper via pkexec
+   without password. The helper only writes/removes /etc/sudoers.d/omarchy-proxy
+   for proxy env_keep -- no other system state is touched.
+
+   Two helper locations are allowed:
+     1) System helper (preferred, root-owned): /usr/local/bin/omarchy-proxy-sudoers-helper
+        Installed by `sudo ./install.sh` -- not writable by the user, so tampering
+        cannot escalate to root.
+     2) Per-user plugin helper (fallback): /home/<user>/.config/omarchy/plugins/abukiya.proxy/proxy-sudoers-helper
+        Used when the system helper is not installed; still requires local+active+wheel.
+
+   Previous rule used substring matching (indexOf) on any path containing
+   "proxy-sudoers-helper" and "omarchy", which allowed e.g.
+   /tmp/evil-omarchy-proxy-sudoers-helper to match for any user. This rule
+   requires an exact program path and an active local session in wheel. */
 polkit.addRule(function(action, subject) {
     if (action.id == "org.freedesktop.policykit.exec") {
         var program = action.lookup("program");
-        if (program &&
-            program.indexOf("proxy-sudoers-helper") !== -1 &&
-            program.indexOf("omarchy") !== -1) {
+        if (!program) return;
+
+        var allowed = false;
+        if (program == "/usr/local/bin/omarchy-proxy-sudoers-helper") {
+            allowed = true;
+        } else if (program == "/home/" + subject.user + "/.config/omarchy/plugins/abukiya.proxy/proxy-sudoers-helper") {
+            allowed = true;
+        } else if (program == "/root/.config/omarchy/plugins/abukiya.proxy/proxy-sudoers-helper" && subject.user == "root") {
+            allowed = true;
+        }
+        if (!allowed) return;
+
+        if (subject.local && subject.active && subject.isInGroup("wheel")) {
             return polkit.Result.YES;
         }
     }

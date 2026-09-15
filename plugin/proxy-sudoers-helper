@@ -7,17 +7,34 @@
 set -euo pipefail
 
 SUDOERS_FILE="/etc/sudoers.d/omarchy-proxy"
+TMP_FILE="${SUDOERS_FILE}.tmp.$$"
 ACTION="${1:-}"
 
 case "$ACTION" in
   write)
-    cat > "$SUDOERS_FILE" <<'EOF'
+    cat > "$TMP_FILE" <<'EOF'
 Defaults env_keep += "http_proxy https_proxy no_proxy"
 EOF
-    chmod 440 "$SUDOERS_FILE"
+    chmod 440 "$TMP_FILE"
+    if command -v visudo >/dev/null 2>&1; then
+      if ! visudo -c -f "$TMP_FILE" >/dev/null 2>&1; then
+        echo "error: sudoers syntax check failed, not installing" >&2
+        rm -f "$TMP_FILE"
+        exit 1
+      fi
+    fi
+    # Atomic install with correct ownership.
+    if command -v install >/dev/null 2>&1; then
+      install -m 440 -o root -g root "$TMP_FILE" "$SUDOERS_FILE" 2>/dev/null || mv -f "$TMP_FILE" "$SUDOERS_FILE"
+    else
+      mv -f "$TMP_FILE" "$SUDOERS_FILE"
+    fi
+    rm -f "$TMP_FILE"
+    chmod 440 "$SUDOERS_FILE" 2>/dev/null || true
+    chown root:root "$SUDOERS_FILE" 2>/dev/null || true
     ;;
   remove)
-    rm -f "$SUDOERS_FILE"
+    rm -f "$SUDOERS_FILE" "$TMP_FILE" 2>/dev/null || true
     ;;
   *)
     echo "usage: proxy-sudoers-helper write|remove" >&2
