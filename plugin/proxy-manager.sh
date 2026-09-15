@@ -2,7 +2,7 @@
 #
 # abukiya.proxy helper: apply / clear system proxy configuration.
 #
-# Usage: proxy-manager.sh <status|enable|disable>
+# Usage: proxy-manager.sh <status|enable|disable [--no-check]>
 #
 # State lives in ~/.config/omarchy/proxy.json (created with defaults if
 # missing). "enabled" is the persisted on/off flag; each integration is only
@@ -104,6 +104,55 @@ refresh_gateway_urls() {
 
 # ----------------------------------------------------------------- env vars
 
+# Write the # PROXY_SETTINGS block into ~/.bashrc, inserting it ABOVE the
+# interactive-shell guard ([[ $- != *i* ]] && return). omarchy's menu/terminal
+# launch scripts run non-interactive shells (bash -lc via execDetached, foot
+# -e), so a block below the guard is never sourced — `sudo pacman -S` from the
+# menu's Install flow would get no http_proxy and fail on a hotspot-only
+# network. Falls back to appending at EOF when no guard exists.
+install_bashrc_block() {
+  local http="$1" https="$2" snippet tmp escaped_http escaped_https
+
+  tmp=$(mktemp)
+  cat > "$tmp" <<'BASHRC_BLOCK'
+
+# PROXY_SETTINGS
+if [[ -f "$HOME/.config/environment.d/proxy.conf" ]]; then
+  export HTTP_PROXY="__HTTP__"
+  export HTTPS_PROXY="__HTTPS__"
+  export http_proxy="__HTTP__"
+  export https_proxy="__HTTPS__"
+  export NODE_USE_ENV_PROXY=1
+else
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
+fi
+# END_PROXY_SETTINGS
+BASHRC_BLOCK
+  # Substitute the actual proxy URLs (or empty strings) into the block.
+  escaped_http=$(printf '%s' "$http" | sed 's/[&|\\]/\\&/g')
+  escaped_https=$(printf '%s' "$https" | sed 's/[&|\\]/\\&/g')
+  sed -i "s|__HTTP__|$escaped_http|g; s|__HTTPS__|$escaped_https|g" "$tmp"
+  snippet=$(cat "$tmp")
+  rm -f "$tmp"
+
+  # Drop any previous block so a stale copy can't linger below the guard.
+  sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
+
+  if grep -q '^\[\[ \$- != \*i\* \]\] && return' "$BASHRC"; then
+    awk -v block="$snippet" '
+      /^\[\[ \$- != \*i\* \]\] && return/ {
+        print block
+        found = 1
+      }
+      { print }
+      END { if (!found) print block }
+    ' "$BASHRC" > "$BASHRC.tmp"
+    mv "$BASHRC.tmp" "$BASHRC"
+  else
+    printf '%s\n' "$snippet" >> "$BASHRC"
+  fi
+}
+
 enable_env() {
   local http https no
   http=$(cfg_get '.httpProxy // empty')
@@ -118,52 +167,35 @@ HTTP_PROXY=$http
 HTTPS_PROXY=$https
 NO_PROXY=$no
 EOF
-  # Persist into ~/.bashrc exactly like setproxy.sh, so new terminals pick
-  # the proxy up immediately instead of waiting for the next login.
-  # CRITICAL: the block must go ABOVE the `.bashrc` interactive-shell guard
-  # ([[ $- != *i* ]] && return). omarchy's menu/terminal launch scripts run
-  # non-interactive shells (bash -lc via execDetached, foot -e), and a block
-  # below the guard never gets sourced — so `sudo pacman -S` from the menu's
-  # Install flow would have no http_proxy and fail on a hotspot-only network.
-  sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
-  awk -v block="$http|$https|$no" '
-    BEGIN { split(block, a, "|"); found=0 }
-    /^\[\[ \$- != \*i\* \]\] && return/ {
-      found=1
-      print "# PROXY_SETTINGS"
-      print "export HTTP_PROXY=" a[1]
-      print "export HTTPS_PROXY=" a[2]
-      print "export http_proxy=" a[1]
-      print "export https_proxy=" a[2]
-      print "export NODE_USE_ENV_PROXY=1"
-      print "# END_PROXY_SETTINGS"
-      print ""
-    }
-    { print }
-    END {
-      if (!found) {
-        print "# PROXY_SETTINGS"
-        print "export HTTP_PROXY=" a[1]
-        print "export HTTPS_PROXY=" a[2]
-        print "export http_proxy=" a[1]
-        print "export https_proxy=" a[2]
-        print "export NODE_USE_ENV_PROXY=1"
-        print "# END_PROXY_SETTINGS"
-      }
-    }
-  ' "$BASHRC" > "$BASHRC.tmp"
-  mv "$BASHRC.tmp" "$BASHRC"
+  # Persist into ~/.bashrc so new terminals pick the proxy up immediately
+  # instead of waiting for the next login. The block is self-cleaning: once
+  # proxy.conf is gone (disable), any inherited proxy env vars get unset in
+  # new shells even before a re-login.
+  install_bashrc_block "$http" "$https"
   # Best effort for the running session's future systemd user services.
   systemctl --user set-environment \
     http_proxy="$http" HTTP_PROXY="$http" \
     https_proxy="$https" HTTPS_PROXY="$https" \
     no_proxy="$no" NO_PROXY="$no" 2>/dev/null || true
+
+  # Update D-Bus activation environment so D-Bus-activated services also see
+  # the proxy vars immediately.
+  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment --systemd \
+      http_proxy="$http" HTTP_PROXY="$http" \
+      https_proxy="$https" HTTPS_PROXY="$https" \
+      no_proxy="$no" NO_PROXY="$no" 2>/dev/null || true
+  fi
 }
 
 disable_env() {
   rm -f "$ENV_DIR/proxy.conf"
-  sed -i '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$BASHRC"
   systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+
+  # Rewrite the bashrc block in "cleaner" mode: the self-cleaning block
+  # detects that proxy.conf is gone and auto-unsets any inherited proxy env
+  # vars.  This way new terminals are clean without requiring a re-login.
+  install_bashrc_block "" ""
 }
 
 # ------------------------------------------------------------------------ git
@@ -263,10 +295,12 @@ enable_pacman() {
     return 0
   fi
   if command -v pkexec >/dev/null 2>&1 && [[ -f "$SUDOERS_HELPER" ]]; then
-    if pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
+    # Timeout after 5s — pkexec blocks indefinitely when no polkit agent is
+    # running, which makes the IPC caller (Panel UI) show "Failed to enable".
+    if timeout 5 pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
       : > "$PACMAN_MARKER"
     else
-      echo "warning: could not write $PACMAN_SUDOERS (needs pkexec auth)"
+      echo "warning: could not write $PACMAN_SUDOERS (pkexec timed out or denied)"
     fi
   else
     echo "warning: pkexec not available; skipping sudoers env_keep"
@@ -274,13 +308,11 @@ enable_pacman() {
 }
 
 disable_pacman() {
-  # Only attempt removal if we know the file exists (marker present).
   if [[ -f "$PACMAN_MARKER" ]]; then
-    if pkexec "$SUDOERS_HELPER" remove 2>/dev/null; then
-      rm -f "$PACMAN_MARKER"
-    else
-      echo "warning: could not remove $PACMAN_SUDOERS (needs pkexec auth)"
-    fi
+    timeout 5 pkexec "$SUDOERS_HELPER" remove 2>/dev/null || \
+      echo "warning: could not remove $PACMAN_SUDOERS (run: sudo rm /etc/sudoers.d/omarchy-proxy)"
+    # Always clear the marker so status reflects "off" even if removal failed.
+    rm -f "$PACMAN_MARKER"
   fi
 }
 
@@ -426,6 +458,33 @@ apply() {
       "${action}_${name}"
     fi
   done
+}
+
+# ---------------------------------------------------------- connectivity check
+
+# Test whether the machine has direct internet access (no proxy).
+# Returns 0 if reachable, 1 if not.  Used after `disable` to warn the user
+# when the phone hotspot requires Every Proxy to be running.
+check_connectivity() {
+  # Three probes — any one success means we're fine.
+  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
+    "http://connectivitycheck.gstatic.com/generate_204" 2>/dev/null && return 0
+  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
+    "http://www.google.com" 2>/dev/null && return 0
+  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
+    "http://1.1.1.1" 2>/dev/null && return 0
+  return 1
+}
+
+notify_no_internet() {
+  notify-send -a omarchy-action -u critical -i network-offline \
+    "Proxy disabled — no internet detected" \
+    "Close all terminals and open a new one.
+
+If using phone hotspot:
+• Disable Every Proxy on your phone
+• Ensure your phone hotspot allows direct traffic (not proxy-only)" \
+    2>/dev/null || true
 }
 
 # Re-apply all integrations with the current config (used after gateway change).
@@ -602,7 +661,17 @@ cmd_gateway_change() {
   cmd_status > "$STATE_DIR/live-status.json"
 }
 
-case "${1:-status}" in
+NO_CHECK=false
+CMD=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-check) NO_CHECK=true ;;
+    status|enable|disable|gateway-change|start-watcher|stop-watcher) CMD="$arg" ;;
+  esac
+done
+CMD="${CMD:-status}"
+
+case "$CMD" in
   status)
     cmd_status
     ;;
@@ -620,6 +689,16 @@ case "${1:-status}" in
     set_enabled_flag false
     mkdir -p "$STATE_DIR"
     cmd_status | tee "$STATE_DIR/live-status.json"
+    # Clean up leftover watcher script (PID file is already removed by stop_watcher).
+    rm -f "$STATE_DIR/gateway-watcher.sh"
+    # After removing all proxy settings, verify direct internet works.
+    # On phone hotspots that require Every Proxy, this will fail and we
+    # should warn the user.
+    if [[ "$NO_CHECK" == "false" ]]; then
+      if ! check_connectivity; then
+        notify_no_internet
+      fi
+    fi
     ;;
   gateway-change)
     cmd_gateway_change
@@ -631,7 +710,7 @@ case "${1:-status}" in
     stop_watcher
     ;;
   *)
-    echo "usage: proxy-manager.sh <status|enable|disable|gateway-change|start-watcher|stop-watcher>" >&2
+    echo "usage: proxy-manager.sh <status|enable|disable [--no-check]|gateway-change|start-watcher|stop-watcher>" >&2
     exit 1
     ;;
 esac

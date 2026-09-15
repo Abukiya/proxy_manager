@@ -21,7 +21,11 @@ On `enable`, sets the proxy (auto-detected gateway) for:
 - **pacman** — `/etc/sudoers.d/omarchy-proxy` env_keep so `sudo pacman`/`yay`
   keep the proxy vars (needs one-time pkexec auth)
 
-`disable` reverts all of the above.
+`disable` reverts all of the above, then probes for direct internet
+(`check_connectivity`, three HTTP checks). If none succeed — e.g. the phone
+hotspot requires Every Proxy — it shows a critical *"Proxy disabled — no
+internet detected"* notification. `proxy-manager.sh disable --no-check` skips
+the probe.
 
 ## Gateway auto-detection
 
@@ -155,6 +159,8 @@ and the gateway-change command.
    inserted *above* `[[ $- != *i* ]] && return`. The menu launches terminals
    via non-interactive `bash -lc` (execDetached), so a block below the guard is
    never sourced and `sudo pacman -S` from Menu -> Install gets no `http_proxy`.
+   `install_bashrc_block()` handles the placement; don't regress to a plain
+   `cat >>` (which appends below the guard).
 2. **`omarchy-launch-browser` strips Exec flags** — it reads only the first
    token of a `.desktop` `Exec=` line, so baking `--proxy-server=...` into
    launchers is pointless. Launchers route through `omarchy-proxy-<browser>`
@@ -165,3 +171,8 @@ and the gateway-change command.
    snapshot refreshed asynchronously; system state is correct immediately.
 5. **`/etc/sudoers.d` unreadable by the user** — existence checks use
    `pkexec test -f`, not `[[ -f ]]`, which always fails on the directory perms.
+6. **Never resolve plugin paths from `manifest.__sourceDir`** — the shell
+   strips `__sourceDir` from third-party plugin manifests, so it is always
+   empty: IPC commands silently no-op and the panel shows *"Failed to
+   enable"*. Resolve siblings with `Qt.resolvedUrl("proxy-manager.sh")` in QML
+   (same idiom as `agx.screen-time`).

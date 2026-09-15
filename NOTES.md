@@ -125,6 +125,11 @@ handles detection. The dispatcher is a fallback, not the primary mechanism.
    never sourced → `sudo pacman -S` from Menu→Install had no `http_proxy` and
    failed on the hotspot-only network. **This fixed the "install doesn't work"
    bug.**
+   **Regression:** the "cleaner" rework switched to `cat >>`, which appended the
+   block BELOW the guard again (menu terminals lost `http_proxy`). Restored via
+   `install_bashrc_block()` which strips any previous block and inserts the new
+   one above the guard (appends to EOF only as a fallback when no guard exists).
+   **Rule: never reintroduce a plain `cat >>` for this block.**
 
 2. **`omarchy-launch-browser` strips Exec flags** — it reads only the FIRST
    token of a `.desktop` `Exec=` line, dropping `--proxy-server=...`. That's
@@ -186,6 +191,26 @@ handles detection. The dispatcher is a fallback, not the primary mechanism.
     changes in this QML environment. The watcher instead calls `enable`
     through IPC to update the cache directly.
 
+12. **Third-party manifests lose `__sourceDir`** — `shell.qml`'s
+    `publicPluginManifest()` strips `__sourceDir` (and the other `__*` fields)
+    from the manifest it injects into third-party plugin instances
+    (shell.qml:316-324, assigned at shell.qml:930). `Service.qml` derived its
+    script path from `manifest.__sourceDir`, which was ALWAYS empty for
+    `abukiya.proxy` → every `enable`/`disable`/`status` IPC silently no-opped
+    → the panel's 8s guard (Panel.qml's pendingGuard) fired *"Failed to enable
+    proxy"* even though nothing had run. Fix: resolve siblings relative to the
+    QML file with `Qt.resolvedUrl("proxy-manager.sh")` — the same idiom
+    `agx.screen-time` uses. **Rule: third-party plugin code must never derive
+    paths from `manifest.__sourceDir`.**
+
+13. **pkexec can stall the IPC caller** — `enable_pacman`/`disable_pacman` used
+    a bare `pkexec`, which blocks indefinitely when no polkit agent responds
+    (and the agent can lag the service's startup). A stalled pkexec made the
+    IPCs that call `apply` exceed the panel's pendingGuard → *"Failed to
+    enable"* even while the rest of the proxy was applying. Fix: `timeout 5
+    pkexec` around both, so a dead/absent agent degrades to a stderr warning
+    instead of blocking the queue.
+
 ## Side effects if you remove it
 
 `omarchy plugin disable` (or deleting the plugin) does NOT revert anything —
@@ -207,10 +232,29 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   Watcher starts on enable, stops on disable, is idempotent.
 - **Configurable port:** `proxy.json` supports a `port` field (default 8080,
   validated 1-65535). Gateway state file stores full URL including port.
+- **Self-cleaning `.bashrc` block:** after `disable` the `# PROXY_SETTINGS`
+  block lingers with empty URLs and auto-unsets any inherited proxy vars in new
+  shells, so terminals don't leak the proxy after a no-re-login disable.
+  Inserted above the interactive guard by `install_bashrc_block()`.
+- **Disable connectivity probe:** `disable` runs `check_connectivity()` (three
+  HTTP probes). If none succeed — e.g. the phone hotspot requires Every Proxy —
+  a critical *"Proxy disabled — no internet detected"* notification is shown.
+  `proxy-manager.sh disable --no-check` skips the probe.
+- **`timeout 5 pkexec`** wraps the sudoers helper so a missing/lagging polkit
+  agent can't stall the enable/disable IPC (see gotcha #13). `disable_pacman`
+  clears the marker even if removal fails and prints a manual
+  `sudo rm /etc/sudoers.d/omarchy-proxy` hint on failure.
+- **D-Bus propagation:** `enable_env` also runs
+  `dbus-update-activation-environment --systemd`, so D-Bus-activated services
+  see the proxy vars immediately (not just future systemd user services).
 - **60 bats tests:** cover all functions — config management, every
   enable/disable integration, the browser wrapper standalone script,
   end-to-end status output, and gateway-change command.
   Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.
+- **Test harness:** the setup extracts the script's function definitions up to
+  the command dispatch with `sed -n '/^set -/d; /^NO_CHECK=/q; p'` (was
+  `case "${1:-status}"`, which no longer matches the `--no-check` dispatch).
+  Test 29 asserts the self-cleaning block stays after disable.
 - **Browser wrapper extracted:** standalone `omarchy-proxy-browser` file instead
   of inline heredoc. write_wrapper() copies the file, with a guard for missing
   source.
@@ -222,8 +266,18 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   - Pacman sudoers cleaned of unused `ftp_proxy`/`all_proxy`
   - Browser wrapper strips whitespace from gateway state file
   - `enable_pacman` trusts the marker file (no pkexec if already created)
+  - **`Service.qml` script path** is now `Qt.resolvedUrl("proxy-manager.sh")`,
+    not `manifest.__sourceDir` (stripped for third-party plugins — gotcha #12).
+    This is what finally fixed *"Failed to enable proxy"* from the panel.
+  - **`.bashrc` block placement** restored via `install_bashrc_block()` so the
+    proxy block sits above the interactive guard again (gotcha #1 regression).
 - **Known issue:** `refresh_gateway_urls` — jq's `//` operator treats `false`
   as falsy, so `gatewayAuto: false` is ignored (always refreshes). Documented
   in test 47.
 - The plugin lives in a git repo (`~/proxy_manager`), copied into omarchy's
   plugin dir and kept in sync with `./sync.sh`.
+- **Repo/live drift:** during the "cleaner" rework the live plugin dir
+  (`~/.config/omarchy/plugins/abukiya.proxy`) got ahead of the repo (the
+  self-cleaning bashrc, connectivity probe, `timeout 5 pkexec`, `--no-check`,
+  D-Bus update). All of that plus the fixes above were synced back
+  repo ← live, so `diff -r plugin <live dir>` is now clean.

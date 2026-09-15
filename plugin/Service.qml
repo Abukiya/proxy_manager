@@ -8,9 +8,14 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string scriptPath: root.manifest
-    ? root.manifest.__sourceDir + "/proxy-manager.sh"
-    : ""
+  // Resolve the sibling script from this file's location, NOT the manifest:
+  // the shell strips `__sourceDir` from the manifest it injects into
+  // third-party plugins, so `manifest.__sourceDir` would always be empty and
+  // every IPC command would silently no-op (panel showed "Failed to enable").
+  readonly property string scriptPath: {
+    var u = Qt.resolvedUrl("proxy-manager.sh").toString()
+    return u.startsWith("file://") ? u.slice(7) : u
+  }
 
   property string cachedStatus: "{}"
   property bool busy: false

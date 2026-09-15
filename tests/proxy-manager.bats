@@ -57,9 +57,10 @@ STUB
 echo "interactive shell"
 BASHRC
 
-  # Source only the function definitions (skip the case statement).
+  # Source only the function definitions (skip the command dispatch at the
+  # bottom: `NO_CHECK=false` + arg scan + `case "$CMD" in`).
   local func_file="$BATS_TEST_TMPDIR/functions.sh"
-  sed -n '1,/^case "${1:-status}"/{ /^set -/d; /^case /d; p; }' \
+  sed -n '/^set -/d; /^NO_CHECK=/q; p' \
     "$(dirname "$BATS_TEST_DIRNAME")/plugin/proxy-manager.sh" > "$func_file"
   # shellcheck disable=SC1090
   source "$func_file"
@@ -488,7 +489,7 @@ EOF
   grep -q 'NO_PROXY=localhost' "$log"
 }
 
-@test "disable_env removes proxy.conf and bashrc block" {
+@test "disable_env removes proxy.conf and leaves self-cleaning bashrc block" {
   # Set up state first.
   mkdir -p "$ENV_DIR"
   echo "test" > "$ENV_DIR/proxy.conf"
@@ -497,7 +498,10 @@ EOF
   run disable_env
   [ "$status" -eq 0 ]
   [ ! -f "$ENV_DIR/proxy.conf" ]
-  ! grep -q '# PROXY_SETTINGS' "$BASHRC"
+  # The block stays behind in "cleaner" mode: with proxy.conf gone it
+  # auto-unsets inherited proxy vars in new shells (no re-login needed).
+  grep -q '# PROXY_SETTINGS' "$BASHRC"
+  grep -q 'unset http_proxy' "$BASHRC"
 }
 
 @test "disable_env unsets uppercase systemctl env vars" {
