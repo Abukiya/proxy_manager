@@ -271,9 +271,11 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
     This is what finally fixed *"Failed to enable proxy"* from the panel.
   - **`.bashrc` block placement** restored via `install_bashrc_block()` so the
     proxy block sits above the interactive guard again (gotcha #1 regression).
-- **Known issue:** `refresh_gateway_urls` — jq's `//` operator treats `false`
-  as falsy, so `gatewayAuto: false` is ignored (always refreshes). Documented
-  in test 47.
+- **Fixed:** `refresh_gateway_urls` previously used `jq '.gatewayAuto // true'`
+  where `//` treats `false` as falsy, so `gatewayAuto: false` was ignored
+  (always refreshed). Now it reads `auto=$(cfg_get '.gatewayAuto')` and
+  early-returns on `== "false"` / empty, so `false` is respected. Test 47
+  documents the old bug.
 - The plugin lives in a git repo (`~/proxy_manager`), copied into omarchy's
   plugin dir and kept in sync with `./sync.sh`.
 - **Repo/live drift:** during the "cleaner" rework the live plugin dir

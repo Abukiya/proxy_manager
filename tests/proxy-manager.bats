@@ -784,13 +784,13 @@ STUB
 }
 EOF
 
-  # NOTE: jq's "//" operator treats false as falsy, so ".gatewayAuto // true"
-  # returns "true" even when gatewayAuto is false. This is a known limitation
-  # — refresh_gateway_urls currently always refreshes. This test documents
-  # the current behavior. A future fix should use ".gatewayAuto // true" only
-  # when the field is null.
+  # Fixed: refresh_gateway_urls now checks `auto == "false"` via cfg_get and
+  # early-returns, so gatewayAuto:false is respected (old bug used `//` which
+  # treats false as falsy). Assert the URL is unchanged.
   run refresh_gateway_urls
   [ "$status" -eq 0 ]
+  proxy=$(jq -r '.httpProxy' "$CONFIG_FILE")
+  [ "$proxy" = "http://old:8080" ]
 }
 
 # ---------------------------------------------------------------------------

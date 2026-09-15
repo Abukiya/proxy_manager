@@ -10,6 +10,13 @@ BarWidget {
   property bool proxyEnabled: false
   property bool opened: false
 
+  // Reuse the Service singleton's cachedStatus instead of spawning a separate
+  // Process every 3s. `bar.shell.serviceFor` is the same object the Panel
+  // reads via its injected `service` prop -- no extra wakeups, and status is
+  // available even when the panel is closed.
+  readonly property var service: bar && bar.shell ? bar.shell.serviceFor("abukiya.proxy") : null
+  readonly property string cachedStatus: service ? service.cachedStatus : ""
+
   function open() {
     if (!root.bar) return
     root.bar.run("omarchy-shell shell toggle abukiya.proxy")
@@ -21,6 +28,9 @@ BarWidget {
   }
 
   function refresh() {
+    // Fallback IPC poll for the case the service is not yet available
+    // (e.g. shell just started and the service instance hasn't mounted).
+    if (root.service && root.service.cachedStatus && root.service.cachedStatus !== "{}") return
     statusProc.running = true
   }
 
@@ -34,16 +44,32 @@ BarWidget {
     root.proxyEnabled = obj.enabled === true
   }
 
+  onCachedStatusChanged: root.onStatus(root.cachedStatus)
+
+  // Keep initial value in sync when the service appears or changes.
+  onServiceChanged: {
+    if (root.cachedStatus) root.onStatus(root.cachedStatus)
+  }
+
+  Component.onCompleted: {
+    if (root.cachedStatus) root.onStatus(root.cachedStatus)
+  }
+
   Process {
     id: statusProc
     command: ["omarchy-shell", "abukiya.proxy", "status"]
-    running: true
+    running: false
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.onStatus(text)
     }
   }
 
+  // Lightweight heartbeat for the fallback path only: when service is
+  // unavailable we still need to poll IPC. Once the service appears,
+  // this timer keeps firing but refresh() short-circuits immediately,
+  // so no Process is spawned. Interval slightly longer than the old 3s
+  // since the service path is near-instant.
   Timer {
     id: pollTimer
     interval: 3000
