@@ -18,7 +18,14 @@ BASHRC="$HOME/.bashrc"
 STATE_DIR="$HOME/.config/hotspot-proxy"
 USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
-SUDOERS_HELPER="$(dirname "$(readlink -f "$0")")/proxy-sudoers-helper"
+# Prefer a root-owned system helper (installed to /usr/local/bin by sudo ./install.sh)
+# — not writable by the user, so tampering can't escalate to root. Falls back
+# to the per-user plugin copy when the system helper is absent.
+if [[ -x /usr/local/bin/omarchy-proxy-sudoers-helper ]]; then
+  SUDOERS_HELPER=/usr/local/bin/omarchy-proxy-sudoers-helper
+else
+  SUDOERS_HELPER="$(dirname "$(readlink -f "$0")")/proxy-sudoers-helper"
+fi
 
 get_port() {
   local port
@@ -81,16 +88,37 @@ cfg_has_integration() {
   cfg_get ".integrations | index(\"$name\") != null" | grep -q true
 }
 
-set_enabled_flag() {
+# Serialize concurrent writers (user enable/disable vs watcher gateway-change)
+# that all read-modify-write $CONFIG_FILE via read_config | jq > .tmp; mv.
+# Uses flock when available; falls back to no lock (still correct on single
+# user, just racy). Lock file lives beside the config.
+with_config_lock() {
+  local lock="$CONFIG_FILE.lock"
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  if command -v flock >/dev/null 2>&1; then
+    (
+      flock -w 5 200 || { echo "warning: could not acquire config lock" >&2; }
+      "$@"
+    ) 200>"$lock"
+  else
+    "$@"
+  fi
+}
+
+_set_enabled_flag_locked() {
   local val="$1"
   read_config | jq --argjson enabled "$val" '.enabled = $enabled' > "$CONFIG_FILE.tmp"
   mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
 }
 
+set_enabled_flag() {
+  with_config_lock _set_enabled_flag_locked "$1"
+}
+
 # When gatewayAuto is on, refresh httpProxy/httpsProxy from the current
 # gateway before applying (mirrors setproxy.sh, which re-detects every run).
 # This is what keeps the proxy correct when the phone hotspot gateway moves.
-refresh_gateway_urls() {
+_refresh_gateway_urls_locked() {
   local auto
   auto=$(cfg_get '.gatewayAuto')
   if [[ "$auto" == "false" ]]; then
@@ -100,6 +128,10 @@ refresh_gateway_urls() {
   url=$(detect_gateway_proxy)
   read_config | jq --arg url "$url" '.httpProxy = $url | .httpsProxy = $url' > "$CONFIG_FILE.tmp"
   mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+}
+
+refresh_gateway_urls() {
+  with_config_lock _refresh_gateway_urls_locked
 }
 
 # ----------------------------------------------------------------- env vars
@@ -146,8 +178,8 @@ BASHRC_BLOCK
       }
       { print }
       END { if (!found) print block }
-    ' "$BASHRC" > "$BASHRC.tmp"
-    mv "$BASHRC.tmp" "$BASHRC"
+    ' "$BASHRC" > "$BASHRC.tmp.$$"
+    mv "$BASHRC.tmp.$$" "$BASHRC"
   else
     printf '%s\n' "$snippet" >> "$BASHRC"
   fi
@@ -327,17 +359,42 @@ enable_vscode() {
   local url
   url=$(cfg_get '.httpProxy // empty')
   [[ -f "$VSCODE_SETTINGS" ]] || return 0
-  jq --arg url "$url" \
+  local tmp="${VSCODE_SETTINGS}.tmp.$$"
+  if jq --arg url "$url" \
     '."http.proxy" = $url | ."http.proxyStrictSSL" = false' \
-    "$VSCODE_SETTINGS" > "$VSCODE_SETTINGS.tmp"
-  mv "$VSCODE_SETTINGS.tmp" "$VSCODE_SETTINGS"
+    "$VSCODE_SETTINGS" > "$tmp" 2>/dev/null; then
+    # Validate the result is valid JSON before replacing.
+    if jq -e . "$tmp" >/dev/null 2>&1; then
+      mv -f "$tmp" "$VSCODE_SETTINGS"
+    else
+      echo "warning: vscode settings write produced invalid JSON, keeping original" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    echo "warning: failed to update $VSCODE_SETTINGS (jq error), keeping original" >&2
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 disable_vscode() {
   [[ -f "$VSCODE_SETTINGS" ]] || return 0
-  jq 'del(."http.proxy") | del(."http.proxyStrictSSL")' \
-    "$VSCODE_SETTINGS" > "$VSCODE_SETTINGS.tmp"
-  mv "$VSCODE_SETTINGS.tmp" "$VSCODE_SETTINGS"
+  local tmp="${VSCODE_SETTINGS}.tmp.$$"
+  if jq 'del(."http.proxy") | del(."http.proxyStrictSSL")' \
+    "$VSCODE_SETTINGS" > "$tmp" 2>/dev/null; then
+    if jq -e . "$tmp" >/dev/null 2>&1; then
+      mv -f "$tmp" "$VSCODE_SETTINGS"
+    else
+      echo "warning: vscode settings write produced invalid JSON, keeping original" >&2
+      rm -f "$tmp"
+      return 1
+    fi
+  else
+    echo "warning: failed to update $VSCODE_SETTINGS (jq error), keeping original" >&2
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # --------------------------------------------------------------------- browser
@@ -466,13 +523,20 @@ apply() {
 # Returns 0 if reachable, 1 if not.  Used after `disable` to warn the user
 # when the phone hotspot requires Every Proxy to be running.
 check_connectivity() {
-  # Three probes — any one success means we're fine.
-  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
-    "http://connectivitycheck.gstatic.com/generate_204" 2>/dev/null && return 0
-  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
-    "http://www.google.com" 2>/dev/null && return 0
-  curl -s --connect-timeout 5 --max-time 10 -o /dev/null \
-    "http://1.1.1.1" 2>/dev/null && return 0
+  # Parallel probes — any one success means direct internet is reachable.
+  # Short timeouts (3s connect, 5s total) and --noproxy keep worst-case ~5s
+  # vs the old 30s sequential. Runs curls in parallel so wall time is ~5s max.
+  local pids=()
+  curl -s --noproxy '*' --connect-timeout 3 --max-time 5 -o /dev/null \
+    "http://connectivitycheck.gstatic.com/generate_204" 2>/dev/null & pids+=($!)
+  curl -s --noproxy '*' --connect-timeout 3 --max-time 5 -o /dev/null \
+    "http://www.google.com" 2>/dev/null & pids+=($!)
+  curl -s --noproxy '*' --connect-timeout 3 --max-time 5 -o /dev/null \
+    "http://1.1.1.1" 2>/dev/null & pids+=($!)
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" 2>/dev/null && { kill "${pids[@]}" 2>/dev/null || true; wait 2>/dev/null || true; return 0; }
+  done
   return 1
 }
 
@@ -537,13 +601,17 @@ while true; do
   [[ -n "$new_gw" ]] || continue
   [[ "$new_gw" != "$last_gw" ]] || continue
 
-  last_gw="$new_gw"
-
   # Re-apply proxy with the new gateway.
   result=$(bash "$PM" gateway-change 2>/dev/null) || continue
 
   changed=$(echo "$result" | jq -r '.gatewayChanged // false' 2>/dev/null)
-  [[ "$changed" == "true" ]] || continue
+  if [[ "$changed" != "true" ]]; then
+    # No re-apply needed (already matches config) -- sync watcher state
+    # so we do not retry the same gateway on the next tick.
+    last_gw="$new_gw"
+    continue
+  fi
+  last_gw="$new_gw"
 
   # Re-run enable through IPC so Service.qml's cachedStatus updates.
   # gateway-change already applied everything; this just refreshes the cache.
@@ -580,8 +648,6 @@ stop_watcher() {
     wait "$pid" 2>/dev/null || true
     rm -f "$WATCHER_PID_FILE"
   fi
-  # Also kill any stale watchers by pattern.
-  pkill -f "gateway-watcher.sh" 2>/dev/null || true
 }
 
 # ----------------------------------------------------------------- gateway-change
@@ -612,9 +678,13 @@ cmd_gateway_change() {
   fi
 
   # Gateway changed — update config and re-apply everything.
-  read_config | jq --arg url "$new_gw" \
-    '.httpProxy = $url | .httpsProxy = $url' > "$CONFIG_FILE.tmp"
-  mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  _gateway_change_write_config_locked() {
+    local url="$1"
+    read_config | jq --arg url "$url" \
+      '.httpProxy = $url | .httpsProxy = $url' > "$CONFIG_FILE.tmp"
+    mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  }
+  with_config_lock _gateway_change_write_config_locked "$new_gw"
 
   # Write the browser gateway state file so existing browser wrappers see
   # the new URL on their next launch.
@@ -650,12 +720,9 @@ cmd_gateway_change() {
     https_proxy="$https" HTTPS_PROXY="$https" \
     no_proxy="$no" NO_PROXY="$no" 2>/dev/null || true
 
-  local escaped_old escaped_new
-  escaped_old=$(printf '%s' "$old_gw" | sed 's/[&/\]/\\&/g')
-  escaped_new=$(printf '%s' "$new_gw" | sed 's/[&/\]/\\&/g')
-
-  printf '{"gatewayChanged":true,"old":"%s","new":"%s","needsRestart":%s,"enabled":true}\n' \
-    "$old_gw" "$new_gw" "$needs_restart"
+  # Build JSON safely via jq so old/new URLs are escaped correctly.
+  jq -n --arg old "$old_gw" --arg new "$new_gw" --argjson needsRestart "$needs_restart" \
+    '{gatewayChanged:true, old:$old, new:$new, needsRestart:$needsRestart, enabled:true}'
 
   # Write live status for the bar widget (bypasses IPC cache).
   cmd_status > "$STATE_DIR/live-status.json"
@@ -693,11 +760,12 @@ case "$CMD" in
     rm -f "$STATE_DIR/gateway-watcher.sh"
     # After removing all proxy settings, verify direct internet works.
     # On phone hotspots that require Every Proxy, this will fail and we
-    # should warn the user.
+    # should warn the user. Run detached so `disable` returns immediately
+    # instead of blocking the Service.qml IPC queue (Panel pendingGuard is
+    # 8s — a blocking 5s probe would false-trip "Failed to disable").
     if [[ "$NO_CHECK" == "false" ]]; then
-      if ! check_connectivity; then
-        notify_no_internet
-      fi
+      ( check_connectivity || notify_no_internet ) >/dev/null 2>&1 &
+      disown 2>/dev/null || true
     fi
     ;;
   gateway-change)

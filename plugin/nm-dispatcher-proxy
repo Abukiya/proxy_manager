@@ -5,7 +5,8 @@
 # Detects gateway changes on connection events and re-applies proxy settings.
 #
 # For mid-connection gateway changes (DHCP renewals), the proxy-manager's
-# built-in gateway-watcher handles detection via `ip monitor route`.
+# built-in gateway-watcher handles detection via polling `ip route` every 5s
+# (we cannot use `ip monitor route` as it needs CAP_NET_ADMIN / root).
 #
 # $1 = interface name
 # $2 = action (up, down, connectivity-change, etc.)
