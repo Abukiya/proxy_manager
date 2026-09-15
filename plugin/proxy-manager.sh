@@ -226,16 +226,26 @@ disable_env() {
   # (dbus-update-activation-environment copies from the current env -- if the
   # vars are still set here, they would be re-propagated as set).
   unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
-  systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+  systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
   if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    # Empty assignment (VAR=) clears the D-Bus activation env; bare VAR would be
+    # ignored when not in current env and would keep the old value.
+    # Note: with --systemd this also sets empty in the systemd manager env, so
+    # we must unset again via systemctl afterwards to end at 0, not empty.
     dbus-update-activation-environment --systemd \
-      http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+      http_proxy= HTTP_PROXY= https_proxy= HTTPS_PROXY= no_proxy= NO_PROXY= NODE_USE_ENV_PROXY= 2>/dev/null || true
+    systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
   fi
   # Defensive fallback: some managers keep empty vars as set; force-clear if
   # show-environment still reports http_proxy.
   if systemctl --user show-environment 2>/dev/null | grep -q '^http_proxy='; then
-    systemctl --user set-environment http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= no_proxy= NO_PROXY= 2>/dev/null || true
-    systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+    systemctl --user set-environment http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= no_proxy= NO_PROXY= NODE_USE_ENV_PROXY= 2>/dev/null || true
+    systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
+    if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+      dbus-update-activation-environment --systemd \
+        http_proxy= HTTP_PROXY= https_proxy= HTTPS_PROXY= no_proxy= NO_PROXY= NODE_USE_ENV_PROXY= 2>/dev/null || true
+      systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
+    fi
   fi
 
   # Rewrite the bashrc block in "cleaner" mode: the self-cleaning block

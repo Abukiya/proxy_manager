@@ -211,6 +211,18 @@ handles detection. The dispatcher is a fallback, not the primary mechanism.
     pkexec` around both, so a dead/absent agent degrades to a stderr warning
     instead of blocking the queue.
 
+14. **Disable must clear systemd + D-Bus with `VAR=`** — `disable_env` first
+    did `systemctl unset` then `dbus-update-activation-environment --systemd
+    http_proxy` (bare name). Bare means "copy from current env" — after we
+    `unset` there, dbus ignored it and kept the old value; next
+    `daemon-reload` re-set the manager env and new apps kept the proxy. Also
+    `--systemd VAR=` leaves an empty var in the manager (still counts as set),
+    so we must `systemctl unset` again after dbus. Fix: unset in process,
+    `systemctl unset`, `dbus --systemd VAR=` + `systemctl unset` (with
+    `NODE_USE_ENV_PROXY`), plus a defensive `show-environment` fallback.
+    Running shells/browsers cache proxy at launch and need restart — new
+    `bash -lc` is clean immediately.
+
 ## Side effects if you remove it
 
 `omarchy plugin disable` (or deleting the plugin) does NOT revert anything —
@@ -247,6 +259,10 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
 - **D-Bus propagation:** `enable_env` also runs
   `dbus-update-activation-environment --systemd`, so D-Bus-activated services
   see the proxy vars immediately (not just future systemd user services).
+- **Disable fully clears env:** `disable_env` unsets in process, clears
+  `systemctl --user` + D-Bus activation env with `VAR=` then re-unsets
+  (covers `NODE_USE_ENV_PROXY`; see gotcha #14). `disable_pip` deduplicates
+  stacked `[global]` and `disable_yarn` handles both `delete` and `unset`.
 - **60 bats tests:** cover all functions — config management, every
   enable/disable integration, the browser wrapper standalone script,
   end-to-end status output, and gateway-change command.

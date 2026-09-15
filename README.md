@@ -21,11 +21,14 @@ On `enable`, sets the proxy (auto-detected gateway) for:
 - **pacman** — `/etc/sudoers.d/omarchy-proxy` env_keep so `sudo pacman`/`yay`
   keep the proxy vars (needs one-time pkexec auth)
 
-`disable` reverts all of the above, then probes for direct internet
-(`check_connectivity`, three HTTP checks). If none succeed — e.g. the phone
-hotspot requires Every Proxy — it shows a critical *"Proxy disabled — no
-internet detected"* notification. `proxy-manager.sh disable --no-check` skips
-the probe.
+`disable` reverts all of the above and fully clears `proxy.conf`,
+`systemctl --user` + D-Bus activation env (see Gotchas), then probes for
+direct internet (`check_connectivity`, three HTTP checks). If none succeed —
+e.g. the phone hotspot requires Every Proxy — it shows a critical
+*"Proxy disabled — no internet detected"* notification.
+`proxy-manager.sh disable --no-check` skips the probe. New terminals/browsers
+pick up direct internet immediately; running shells/browsers cache proxy at
+launch and need restart.
 
 ## Gateway auto-detection
 
