@@ -19,7 +19,7 @@ STATE_DIR="$HOME/.config/hotspot-proxy"
 USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
 # Prefer a root-owned system helper (installed to /usr/local/bin by sudo ./install.sh)
-# — not writable by the user, so tampering can't escalate to root. Falls back
+# -- not writable by the user, so tampering can't escalate to root. Falls back
 # to the per-user plugin copy when the system helper is absent.
 if [[ -x /usr/local/bin/omarchy-proxy-sudoers-helper ]]; then
   SUDOERS_HELPER=/usr/local/bin/omarchy-proxy-sudoers-helper
@@ -139,7 +139,7 @@ refresh_gateway_urls() {
 # Write the # PROXY_SETTINGS block into ~/.bashrc, inserting it ABOVE the
 # interactive-shell guard ([[ $- != *i* ]] && return). omarchy's menu/terminal
 # launch scripts run non-interactive shells (bash -lc via execDetached, foot
-# -e), so a block below the guard is never sourced — `sudo pacman -S` from the
+# -e), so a block below the guard is never sourced -- `sudo pacman -S` from the
 # menu's Install flow would get no http_proxy and fail on a hotspot-only
 # network. Falls back to appending at EOF when no guard exists.
 install_bashrc_block() {
@@ -222,7 +222,21 @@ EOF
 
 disable_env() {
   rm -f "$ENV_DIR/proxy.conf"
+  # Unset in this process so dbus propagation can clear the activation env
+  # (dbus-update-activation-environment copies from the current env -- if the
+  # vars are still set here, they would be re-propagated as set).
+  unset http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY NODE_USE_ENV_PROXY 2>/dev/null || true
   systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+  if command -v dbus-update-activation-environment >/dev/null 2>&1; then
+    dbus-update-activation-environment --systemd \
+      http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+  fi
+  # Defensive fallback: some managers keep empty vars as set; force-clear if
+  # show-environment still reports http_proxy.
+  if systemctl --user show-environment 2>/dev/null | grep -q '^http_proxy='; then
+    systemctl --user set-environment http_proxy= https_proxy= HTTP_PROXY= HTTPS_PROXY= no_proxy= NO_PROXY= 2>/dev/null || true
+    systemctl --user unset-environment http_proxy HTTP_PROXY https_proxy HTTPS_PROXY no_proxy NO_PROXY 2>/dev/null || true
+  fi
 
   # Rewrite the bashrc block in "cleaner" mode: the self-cleaning block
   # detects that proxy.conf is gone and auto-unsets any inherited proxy env
@@ -272,8 +286,9 @@ enable_yarn() {
 
 disable_yarn() {
   command -v yarn >/dev/null 2>&1 || return 0
-  yarn config delete proxy >/dev/null 2>&1 || true
-  yarn config delete https-proxy >/dev/null 2>&1 || true
+  # classic `yarn config delete` and berry `yarn config unset` -- try both
+  yarn config delete proxy >/dev/null 2>&1 || yarn config unset proxy >/dev/null 2>&1 || true
+  yarn config delete https-proxy >/dev/null 2>&1 || yarn config unset https-proxy >/dev/null 2>&1 || true
 }
 
 # ------------------------------------------------------------------------ pip
@@ -301,6 +316,18 @@ disable_pip() {
   command -v pip >/dev/null 2>&1 || return 0
   if [[ -f "$PIP_CONF_DIR/pip.conf" ]]; then
     sed -i '/^\s*proxy\s*=/d' "$PIP_CONF_DIR/pip.conf"
+    # Collapse consecutive empty [global] headers left behind by repeated
+    # enable/disable cycles (each enable inserted a new [global]).
+    # First deduplicate, then drop a sole empty header if the file is now emptyish.
+    local tmp="$PIP_CONF_DIR/pip.conf.tmp.$$"
+    awk '
+      /^\[global\]/ { if (seen_global) next; seen_global=1 }
+      { print }
+    ' "$PIP_CONF_DIR/pip.conf" > "$tmp" && mv -f "$tmp" "$PIP_CONF_DIR/pip.conf"
+    # If the file now only contains [global] and whitespace, remove it.
+    if ! grep -qvE '^\s*(\[.*\]|\s*)$' "$PIP_CONF_DIR/pip.conf" 2>/dev/null; then
+      rm -f "$PIP_CONF_DIR/pip.conf"
+    fi
   fi
 }
 
@@ -327,7 +354,7 @@ enable_pacman() {
     return 0
   fi
   if command -v pkexec >/dev/null 2>&1 && [[ -f "$SUDOERS_HELPER" ]]; then
-    # Timeout after 5s — pkexec blocks indefinitely when no polkit agent is
+    # Timeout after 5s -- pkexec blocks indefinitely when no polkit agent is
     # running, which makes the IPC caller (Panel UI) show "Failed to enable".
     if timeout 5 pkexec "$SUDOERS_HELPER" write 2>/dev/null; then
       : > "$PACMAN_MARKER"
@@ -404,7 +431,7 @@ disable_vscode() {
 # Exec line, so baking "--proxy-server=..." into Exec gets stripped. Instead
 # we point every launcher at a per-browser wrapper that reads the LIVE gateway
 # from the state file at launch time. The wrapper infers the browser binary
-# from its own filename (symlink), so it works no matter how it's invoked —
+# from its own filename (symlink), so it works no matter how it's invoked --
 # via gtk-launch (full Exec) or omarchy-launch-browser (first token only).
 WRAPPER_BIN="$HOME/.local/bin/omarchy-proxy-browser"
 WRAPPER_SRC="$(dirname "$(readlink -f "$0")")/omarchy-proxy-browser"
@@ -523,7 +550,7 @@ apply() {
 # Returns 0 if reachable, 1 if not.  Used after `disable` to warn the user
 # when the phone hotspot requires Every Proxy to be running.
 check_connectivity() {
-  # Parallel probes — any one success means direct internet is reachable.
+  # Parallel probes -- any one success means direct internet is reachable.
   # Short timeouts (3s connect, 5s total) and --noproxy keep worst-case ~5s
   # vs the old 30s sequential. Runs curls in parallel so wall time is ~5s max.
   local pids=()
@@ -542,7 +569,7 @@ check_connectivity() {
 
 notify_no_internet() {
   notify-send -a omarchy-action -u critical -i network-offline \
-    "Proxy disabled — no internet detected" \
+    "Proxy disabled -- no internet detected" \
     "Close all terminals and open a new one.
 
 If using phone hotspot:
@@ -553,7 +580,7 @@ If using phone hotspot:
 
 # Re-apply all integrations with the current config (used after gateway change).
 # Unlike the full `enable` path, this does NOT touch the enabled flag or
-# refresh gateway URLs — the caller already did that.
+# refresh gateway URLs -- the caller already did that.
 # pacman is skipped: the sudoers env_keep rule is static and doesn't change
 # when the gateway IP changes.  Re-applying it would trigger a pkexec dialog.
 apply_current() {
@@ -677,7 +704,7 @@ cmd_gateway_change() {
     return 0
   fi
 
-  # Gateway changed — update config and re-apply everything.
+  # Gateway changed -- update config and re-apply everything.
   _gateway_change_write_config_locked() {
     local url="$1"
     read_config | jq --arg url "$url" \
@@ -762,7 +789,7 @@ case "$CMD" in
     # On phone hotspots that require Every Proxy, this will fail and we
     # should warn the user. Run detached so `disable` returns immediately
     # instead of blocking the Service.qml IPC queue (Panel pendingGuard is
-    # 8s — a blocking 5s probe would false-trip "Failed to disable").
+    # 8s -- a blocking 5s probe would false-trip "Failed to disable").
     if [[ "$NO_CHECK" == "false" ]]; then
       ( check_connectivity || notify_no_internet ) >/dev/null 2>&1 &
       disown 2>/dev/null || true
