@@ -50,6 +50,7 @@ The plugin's live config/state lives outside the repo:
 - `~/.config/hotspot-proxy/gateway-watcher.pid` — watcher PID file
 - `~/.config/hotspot-proxy/live-status.json` — status JSON for bar widget
 - `/etc/sudoers.d/omarchy-proxy` — pacman/yay env_keep (via pkexec)
+- `~/.curlrc` — file-based curl proxy (`# PROXY_SETTINGS` `proxy`/`noproxy`) so every `curl` caller — including third-party plugins — is proxy-aware without restarting the shell
 - `/etc/NetworkManager/dispatcher.d/99-proxy-gateway` — NM dispatcher (optional, needs sudo)
 
 ## What enable/disable touch
@@ -59,6 +60,7 @@ The plugin's live config/state lives outside the repo:
 - **npm** — proxy, https-proxy, strict-ssl false, maxsockets 1
 - **yarn** — proxy, https-proxy (only if yarn installed)
 - **pip** — `~/.config/pip/pip.conf`
+- **curl** — `~/.curlrc` (`# PROXY_SETTINGS` `proxy`/`noproxy`) so every `curl` caller — including third-party plugins (Todoist, etc.) — is proxy-aware without restarting the shell; watcher keeps it fresh on gateway drift
 - **vscode** — `http.proxy` + `http.proxyStrictSSL` in `Code/User/settings.json`
 - **browser** — chromium/google-chrome launchers routed through wrappers
 - **pacman** — sudoers env_keep so `sudo pacman`/`yay` keep proxy vars
@@ -223,6 +225,8 @@ handles detection. The dispatcher is a fallback, not the primary mechanism.
     Running shells/browsers cache proxy at launch and need restart — new
     `bash -lc` is clean immediately.
 
+15. **`curl` callers ignore shell env — root fix for all curl-based plugins** — third-party plugins (Todoist `curl -K -` with stdin `Authorization: Bearer`) shelled `curl` via `Quickshell.Io.Process`, which inherits env from the `quickshell` process at launch time. When the hotspot gateway drifted (`127.0.0.1:8080` → `192.168.176.99:8080`), `http_proxy` in the shell stayed stale until restart, so `curl` tried the dead proxy and returned `(7) Could not connect` → panel showed `Couldn’t reach Todoist — check your connection` even though the token was valid and `api/v1` was current. Diagnosis: compare `proxy.json` vs `tr '\0' '\n' < /proc/$(pidof quickshell)/environ | grep -i proxy` vs `systemctl --user show-environment | grep proxy`; prove with `curl -x http://old:8080` (fails) vs `curl -x http://new:8080` (200) vs `curl --config ~/.curlrc` (200). Fix: `~/.curlrc` `# PROXY_SETTINGS` `proxy`/`noproxy` is read by every `curl` invocation independent of env. `enable_curl`/`disable_curl` manage only that block (preserve other content, atomic `.tmp.$$`, `noproxy` conditional); `integration_active` reports `curl`, `apply`/`apply_current`/watcher include `curl` (pacman stays last), default `integrations` now includes `curl`, and `ensure_curl_integration` migrates existing installs. Verified: isolated `$HOME` bats + live `~/.curlrc` → `curl` works even with empty env (`env -u http_proxy curl https://api.todoist.com/api/v1/projects` → 200).
+
 ## Side effects if you remove it
 
 `omarchy plugin disable` (or deleting the plugin) does NOT revert anything —
@@ -237,7 +241,7 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
 
 ## Current state
 
-- **All integrations working:** env, bashrc, git, npm, yarn, pip, vscode,
+- **All integrations working:** env, bashrc, git, npm, yarn, pip, curl (`~/.curlrc`), vscode,
   browser, pacman (needs one-time pkexec auth to create the sudoers file).
 - **Gateway auto-detection:** background watcher polls `ip route` every 5s,
   detects gateway changes, re-applies all integrations, notifies the user.
@@ -263,7 +267,7 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   `systemctl --user` + D-Bus activation env with `VAR=` then re-unsets
   (covers `NODE_USE_ENV_PROXY`; see gotcha #14). `disable_pip` deduplicates
   stacked `[global]` and `disable_yarn` handles both `delete` and `unset`.
-- **60 bats tests:** cover all functions — config management, every
+- **71 bats tests:** cover all functions — config management, every `curl` via `~/.curlrc`,
   enable/disable integration, the browser wrapper standalone script,
   end-to-end status output, and gateway-change command.
   Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.

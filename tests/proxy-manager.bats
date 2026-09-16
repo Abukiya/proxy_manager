@@ -1067,3 +1067,145 @@ EOF
   enabled=$(echo "$output" | jq -r '.enabled')
   [ "$enabled" = "false" ]
 }
+
+# ---------------------------------------------------------------------------
+# enable_curl / disable_curl
+# ---------------------------------------------------------------------------
+
+@test "enable_curl creates ~/.curlrc with proxy and noproxy" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://192.168.1.1:8080", "httpsProxy": "http://192.168.1.1:8080", "noProxy": "localhost,127.0.0.1,::1" }
+EOF
+  export CURLRC="$HOME/.curlrc"
+  run enable_curl
+  [ "$status" -eq 0 ]
+  [ -f "$CURLRC" ]
+  grep -q 'proxy = "http://192.168.1.1:8080"' "$CURLRC"
+  grep -q 'noproxy = "localhost' "$CURLRC"
+  grep -q '# PROXY_SETTINGS' "$CURLRC"
+}
+
+@test "enable_curl preserves existing curlrc content" {
+  cat > "$HOME/.curlrc" <<'EOF'
+# my curl opts
+max-time = 30
+EOF
+  export CURLRC="$HOME/.curlrc"
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://10.0.0.1:9090", "noProxy": "localhost" }
+EOF
+  run enable_curl
+  [ "$status" -eq 0 ]
+  grep -q 'max-time = 30' "$CURLRC"
+  grep -q 'proxy = "http://10.0.0.1:9090"' "$CURLRC"
+}
+
+@test "enable_curl is idempotent — second run does not duplicate block" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://1.1.1.1:8080", "noProxy": "localhost" }
+EOF
+  export CURLRC="$HOME/.curlrc"
+  enable_curl
+  enable_curl
+  local count
+  count=$(grep -c '# PROXY_SETTINGS' "$CURLRC")
+  [ "$count" -eq 1 ]
+}
+
+@test "enable_curl updates proxy on gateway change" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://10.0.0.1:8080", "noProxy": "localhost" }
+EOF
+  export CURLRC="$HOME/.curlrc"
+  enable_curl
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://10.0.0.99:8080", "noProxy": "localhost" }
+EOF
+  run enable_curl
+  [ "$status" -eq 0 ]
+  grep -q 'proxy = "http://10.0.0.99:8080"' "$CURLRC"
+  ! grep -q 'proxy = "http://10.0.0.1:8080"' "$CURLRC"
+}
+
+@test "disable_curl removes proxy block only" {
+  cat > "$HOME/.curlrc" <<'EOF'
+# my opts
+max-time = 30
+# PROXY_SETTINGS
+proxy = "http://1.2.3.4:8080"
+noproxy = "localhost"
+# END_PROXY_SETTINGS
+EOF
+  export CURLRC="$HOME/.curlrc"
+  run disable_curl
+  [ "$status" -eq 0 ]
+  grep -q 'max-time = 30' "$CURLRC"
+  ! grep -q 'proxy = ' "$CURLRC"
+  [ -f "$CURLRC" ]
+}
+
+@test "disable_curl removes file when only proxy block remains" {
+  cat > "$HOME/.curlrc" <<'EOF'
+# PROXY_SETTINGS
+proxy = "http://1.2.3.4:8080"
+noproxy = "localhost"
+# END_PROXY_SETTINGS
+EOF
+  export CURLRC="$HOME/.curlrc"
+  run disable_curl
+  [ "$status" -eq 0 ]
+  [ ! -f "$CURLRC" ]
+}
+
+@test "disable_curl is no-op when curlrc does not exist" {
+  export CURLRC="$HOME/.curlrc"
+  rm -f "$CURLRC"
+  run disable_curl
+  [ "$status" -eq 0 ]
+}
+
+@test "ensure_curl_integration adds curl to existing config" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://1.1.1.1:8080", "integrations": ["env", "git"], "enabled": true }
+EOF
+  run ensure_curl_integration
+  [ "$status" -eq 0 ]
+  jq -e '.integrations | index("curl") != null' "$CONFIG_FILE"
+}
+
+@test "ensure_curl_integration is no-op when curl already present" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "httpProxy": "http://1.1.1.1:8080", "integrations": ["env", "curl"], "enabled": true }
+EOF
+  local before after
+  before=$(jq -c '.integrations' "$CONFIG_FILE")
+  run ensure_curl_integration
+  [ "$status" -eq 0 ]
+  after=$(jq -c '.integrations' "$CONFIG_FILE")
+  [ "$before" = "$after" ]
+}
+
+@test "integration_active reports curl true when curlrc exists" {
+  export CURLRC="$HOME/.curlrc"
+  mkdir -p "$(dirname "$CURLRC")"
+  echo 'proxy = "http://1.1.1.1:8080"' > "$CURLRC"
+  mkdir -p "$STATE_DIR"
+  run integration_active
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.curl == true'
+}
+
+@test "integration_active reports curl false when no curlrc" {
+  export CURLRC="$HOME/.curlrc"
+  rm -f "$CURLRC"
+  mkdir -p "$STATE_DIR"
+  run integration_active
+  [ "$status" -eq 0 ]
+  echo "$output" | jq -e '.curl == false'
+}

@@ -15,6 +15,9 @@ On `enable`, sets the proxy (auto-detected gateway) for:
 - **npm** — `proxy`, `https-proxy`, `strict-ssl false`, `maxsockets 1`
 - **yarn** — `proxy`, `https-proxy` (if yarn installed)
 - **pip** — `~/.config/pip/pip.conf`
+- **curl** — `~/.curlrc` (`# PROXY_SETTINGS` `proxy`/`noproxy`) so every `curl`
+  call — including third-party Omarchy plugins that shell out via `curl`
+  (Todoist, weather, etc.) — is proxy-aware without restarting the shell
 - **browser** — user `.desktop` launchers routed through a per-browser wrapper
   (`~/.local/bin/omarchy-proxy-browser`) that reads the live gateway at launch
 - **vscode** — `http.proxy` + `http.proxyStrictSSL` in `Code/User/settings.json`
@@ -102,7 +105,7 @@ omarchy-shell abukiya.proxy status
 Bar widget (right side): the **󰓓 Proxy** icon shows proxy state (accent =
 enabled). Left-click opens/closes the proxy panel; the proxy itself is toggled
 from the panel's Enable/Disable switch. The panel also shows status rows for
-git, npm, yarn, pip, VSCode, browser, and pacman integrations, and the
+git, npm, yarn, pip, curl, VSCode, browser, and pacman integrations, and the
 configured endpoint.
 
 CLI:
@@ -121,7 +124,7 @@ Config lives in `~/.config/omarchy/proxy.json`:
   "httpProxy": "http://192.168.1.1:8080",
   "httpsProxy": "http://192.168.1.1:8080",
   "noProxy": "localhost,127.0.0.1,::1",
-  "integrations": ["env", "git", "npm", "yarn", "pip", "pacman", "browser", "vscode"],
+  "integrations": ["env", "git", "npm", "yarn", "pip", "curl", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
   "enabled": true
@@ -134,7 +137,7 @@ Config lives in `~/.config/omarchy/proxy.json`:
 
 ## Testing
 
-The project includes a bats test suite with 60 tests covering all functions:
+The project includes a bats test suite with 71 tests covering all functions:
 
 ```sh
 # Install bats if not present.
@@ -146,7 +149,7 @@ git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
 
 Tests use isolated temp directories and stub commands — no system state is
 modified. Coverage includes: config management, all integration enable/disable
-functions, the browser wrapper standalone script, end-to-end status output,
+functions (including `curl` via `~/.curlrc`), the browser wrapper standalone script, end-to-end status output,
 and the gateway-change command.
 
 ## Removal
@@ -179,3 +182,14 @@ and the gateway-change command.
    empty: IPC commands silently no-op and the panel shows *"Failed to
    enable"*. Resolve siblings with `Qt.resolvedUrl("proxy-manager.sh")` in QML
    (same idiom as `agx.screen-time`).
+7. **`curl` callers ignore shell env** — `Quickshell.Io.Process` inherits env
+   from the `quickshell` process at launch time. When the hotspot gateway
+   drifts (`127.0.0.1:8080` → `192.168.176.99:8080`), `http_proxy` in the
+   shell stays stale until restart, so any third-party plugin that shells
+   `curl` (Todoist `curl -K -` with stdin header, weather, etc.) gets
+   `Couldn’t reach … — check your connection`. Fix: `~/.curlrc`
+   `# PROXY_SETTINGS` `proxy`/`noproxy` is read by every `curl` invocation
+   independent of env. `enable_curl`/`disable_curl` manage only that block
+   (preserve other content, atomic `.tmp.$$`, `noproxy` conditional), and
+   `apply`/`apply_current`/watcher keep it fresh on gateway drift. No
+   per-plugin patch or shell restart needed.

@@ -13,6 +13,7 @@ set -uo pipefail
 CONFIG_FILE="$HOME/.config/omarchy/proxy.json"
 ENV_DIR="$HOME/.config/environment.d"
 PIP_CONF_DIR="$HOME/.config/pip"
+CURLRC="$HOME/.curlrc"
 PACMAN_SUDOERS="/etc/sudoers.d/omarchy-proxy"
 BASHRC="$HOME/.bashrc"
 STATE_DIR="$HOME/.config/hotspot-proxy"
@@ -69,7 +70,7 @@ read_config() {
   "httpProxy": "$url",
   "httpsProxy": "$url",
   "noProxy": "localhost,127.0.0.1,::1",
-  "integrations": ["env", "git", "npm", "pip", "pacman", "browser", "vscode"],
+  "integrations": ["env", "git", "npm", "pip", "curl", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
   "enabled": $enabled
@@ -79,6 +80,13 @@ EOF
   cat "$CONFIG_FILE"
 }
 
+
+# Ensure curl is present in integrations for existing installs (pre-curl era).
+ensure_curl_integration() {
+  if ! cfg_has_integration curl 2>/dev/null; then
+    read_config | jq '.integrations += ["curl"]' > "$CONFIG_FILE.tmp" && mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+  fi
+}
 cfg_get() {
   read_config | jq -r "$1"
 }
@@ -341,6 +349,45 @@ disable_pip() {
   fi
 }
 
+# ---------------------------------------------------------------------- curl
+# ~/.curlrc is read by every curl invocation, independent of the
+# parent process env. This makes third-party plugins that shell out via
+# curl (Todoist, weather, etc.) proxy-aware without patching each plugin
+# or restarting the shell to refresh a stale http_proxy inherited by quickshell.
+enable_curl() {
+  local http no
+  http=$(cfg_get '.httpProxy // empty')
+  no=$(cfg_get '.noProxy // empty')
+  [[ -n $http ]] || return 0
+  local tmp="${CURLRC}.tmp.$$"
+  if [[ -f "$CURLRC" ]]; then
+    sed '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$CURLRC" > "$tmp" 2>/dev/null || cp "$CURLRC" "$tmp"
+  else
+    : > "$tmp"
+  fi
+  # curl needs proxy set; HTTPS reuses the same proxy when https_proxy == http_proxy (our config).
+  # noproxy is only written when non-empty (empty noproxy line confuses curl).
+  {
+  echo "# PROXY_SETTINGS"
+  echo "proxy = \"$http\""
+  if [[ -n $no ]]; then echo "noproxy = \"$no\""; fi
+  echo "# END_PROXY_SETTINGS"
+  } >> "$tmp"
+  mv -f "$tmp" "$CURLRC"
+}
+
+disable_curl() {
+  [[ -f "$CURLRC" ]] || return 0
+  local tmp="${CURLRC}.tmp.$$"
+  sed '/# PROXY_SETTINGS/,/# END_PROXY_SETTINGS/d' "$CURLRC" > "$tmp" 2>/dev/null || return 0
+  if ! grep -qvE '^\s*$' "$tmp" 2>/dev/null; then
+    rm -f "$tmp" "$CURLRC"
+  else
+    sed -i '/./,$!d' "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$CURLRC"
+  fi
+}
+
 # --------------------------------------------------------------------- pacman
 
 # pacman runs as root via sudo; sudo drops proxy env vars unless a sudoers
@@ -524,6 +571,7 @@ integration_active() {
     out+="\"yarn\":false,"
   fi
   out+="\"pip\":$(grep -q '^\s*proxy\s*=' "$PIP_CONF_DIR/pip.conf" 2>/dev/null && echo true || echo false),"
+  out+="\"curl\":$(grep -q '^proxy = ' "$CURLRC" 2>/dev/null && echo true || echo false),"
   out+="\"pacman\":$(pacman_sudoers_exists && echo true || echo false),"
   local vscode_active="false"
   if [[ -f "$VSCODE_SETTINGS" ]] && jq -e '."http.proxy" != null' "$VSCODE_SETTINGS" >/dev/null 2>&1; then
@@ -547,7 +595,7 @@ cmd_status() {
 # dialog) and would otherwise block the browser/env steps behind it.
 apply() {
   local action="$1"
-  for name in env git npm yarn pip browser vscode pacman; do
+  for name in env git npm yarn pip curl browser vscode pacman; do
     if cfg_has_integration "$name"; then
       "${action}_${name}"
     fi
@@ -594,7 +642,7 @@ If using phone hotspot:
 # pacman is skipped: the sudoers env_keep rule is static and doesn't change
 # when the gateway IP changes.  Re-applying it would trigger a pkexec dialog.
 apply_current() {
-  for name in env git npm yarn pip browser vscode; do
+  for name in env git npm yarn pip curl browser vscode; do
     if cfg_has_integration "$name"; then
       "enable_${name}"
     fi
@@ -727,6 +775,7 @@ cmd_gateway_change() {
   # the new URL on their next launch.
   mkdir -p "$STATE_DIR"
   echo "$new_gw" > "$STATE_DIR/gateway"
+  ensure_curl_integration 2>/dev/null || true
 
   apply_current
 
@@ -780,6 +829,7 @@ case "$CMD" in
     cmd_status
     ;;
   enable)
+    ensure_curl_integration 2>/dev/null || true
     refresh_gateway_urls
     apply enable
     set_enabled_flag true
