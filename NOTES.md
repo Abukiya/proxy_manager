@@ -1,4 +1,17 @@
-# Proxy Manager — Session Notes
+# Proxy Manager — Maintainer Notes
+
+## Historical context
+
+Before this project, proxy switching was handled with personal
+`setproxy.sh` and `clearproxy.sh` scripts. Those scripts were useful for the
+original setup but required remembering separate commands and did not provide
+an Omarchy UI, integration status, or reliable cleanup across all tools.
+Proxy Manager was built to turn that workflow into a reusable Omarchy plugin
+with one enable/disable action and automatic hotspot gateway tracking.
+
+This history is intentionally kept here rather than in the user-facing
+README; new users need to understand the current plugin, not the author's
+previous local scripts.
 
 What we built and everything we learned along the way. Read this to catch up.
 
@@ -269,7 +282,7 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   `systemctl --user` + D-Bus activation env with `VAR=` then re-unsets
   (covers `NODE_USE_ENV_PROXY`; see gotcha #14). `disable_pip` deduplicates
   stacked `[global]` and `disable_yarn` handles both `delete` and `unset`.
-- **71 bats tests:** cover all functions — config management, every `curl` via `~/.curlrc`,
+- **77 bats tests:** cover all functions — config management, every `curl` via `~/.curlrc`,
   enable/disable integration, the browser wrapper standalone script,
   end-to-end status output, and gateway-change command.
   Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.

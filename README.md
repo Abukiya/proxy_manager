@@ -1,149 +1,105 @@
-# abukiya.proxy — Omarchy proxy manager plugin
+# Proxy Manager for Omarchy
 
-Background service plugin for Omarchy that replaces the old ad-hoc
-`setproxy.sh` / `clearproxy.sh` scripts. Toggles system proxy configuration
-for a phone-hotspot gateway, applied live and reachable from a bar widget and
-panel.
+Proxy Manager gives Omarchy a simple switch for networks where internet
+access must go through a local proxy, such as a phone hotspot running a proxy
+service. It replaces the need to maintain separate shell commands for each
+tool you use.
 
-## What it does
+Enable it from the Proxy icon in the bar or from the command line. Proxy
+Manager applies the setting to your development tools, terminals, browsers,
+and package managers, then removes those settings cleanly when you disable it.
 
-On `enable`, sets the proxy (auto-detected gateway) for:
+## Highlights
 
-- **env** — `~/.config/environment.d/proxy.conf` + a `# PROXY_SETTINGS` block
-  in `~/.bashrc` + `systemctl --user set-environment` (both upper and lower case)
-- **git** — global `http.proxy` / `https.proxy`
-- **npm** — `proxy`, `https-proxy`, `strict-ssl false`, `maxsockets 1`
-- **yarn** — `proxy`, `https-proxy` (if yarn installed)
-- **pip** — `~/.config/pip/pip.conf`
-- **curl** — `~/.curlrc` (`# PROXY_SETTINGS` `proxy`/`noproxy`) so every `curl`
-  call — including third-party Omarchy plugins that shell out via `curl`
-  (Todoist, weather, etc.) — is proxy-aware without restarting the shell
-- **browser** — user `.desktop` launchers routed through a per-browser wrapper
-  (`~/.local/bin/omarchy-proxy-browser`) that reads the live gateway at launch
-- **vscode** — `http.proxy` + `http.proxyStrictSSL` in `Code/User/settings.json`
-- **pacman** — `/etc/sudoers.d/omarchy-proxy` env_keep so `sudo pacman`/`yay`
-  keep the proxy vars (needs one-time pkexec auth)
+- Detects the current hotspot gateway automatically.
+- Reapplies the proxy when the hotspot gateway changes.
+- Provides a bar indicator, panel, and command-line interface.
+- Supports environment variables, Git, npm, Yarn, pip, curl, browsers,
+  VS Code, and optional pacman/yay support.
+- Preserves unrelated configuration wherever it makes changes.
+- Works without root for the main user-level features.
 
-`disable` reverts all of the above and fully clears `proxy.conf`,
-`systemctl --user` + D-Bus activation env (see Gotchas), then probes for
-direct internet (`check_connectivity`, three HTTP checks). If none succeed —
-e.g. the phone hotspot requires Every Proxy — it shows a critical
-*"Proxy disabled — no internet detected"* notification.
-`proxy-manager.sh disable --no-check` skips the probe. New terminals/browsers
-pick up direct internet immediately; running shells/browsers cache proxy at
-launch and need restart.
+Hermes CLI/Desktop proxy support is intentionally deferred and is not included
+in this release.
 
-## Gateway auto-detection
+## Requirements
 
-When the phone hotspot IP changes, the proxy automatically re-applies to the
-new gateway without manual intervention:
+Proxy Manager is designed for Omarchy and requires:
 
-1. A **background watcher** polls `ip route` every 5 seconds
-2. When the default gateway changes, it calls `gateway-change`
-3. `gateway-change` updates the config, re-applies all integrations, and
-   sends a desktop notification
-4. The watcher then calls `enable` through IPC to refresh the bar widget
-   and panel status
+- `omarchy`
+- `omarchy-shell`
+- Bash
+- `jq`
+- `ip` from `iproute2`
 
-The watcher starts automatically on `enable` and stops on `disable`.
-
-**Still needs manual restart:** VS Code and npm cache proxy settings at
-startup. All other tools (git, pip, new terminal sessions, new browser
-windows) pick up the new gateway automatically.
-
-## Layout
-
-```
-proxy_manager/
-  plugin/                 -> live plugin dir (copied into omarchy plugins)
-    manifest.json
-    Service.qml           IPC service (omarchy-shell abukiya.proxy ...)
-    BarWidget.qml         bar icon; left-click opens/closes the panel
-    Panel.qml             enable/disable switch + integration status rows
-    proxy-manager.sh      all the logic
-    proxy-sudoers-helper  pkexec helper for sudoers write/remove
-    omarchy-proxy-browser standalone browser wrapper script
-    nm-dispatcher-proxy   NetworkManager dispatcher for connection events
-  policy/
-    60-abukiya-proxy.rules  polkit rule for passwordless pacman proxy
-  tests/
-    proxy-manager.bats    bats test suite (77 tests)
-  check.sh               release validation (syntax, JSON, and tests)
-  install.sh              (re)install: copy + enable
-  sync.sh                 re-sync plugin/ to the live dir after edits
-  docs/
-    omarchy-menu.jsonc    note: menu integration removed (see file)
-    proxy.json            sample config
-  README.md
-  NOTES.md
-```
-
-> The live plugin dir is a real **copy**, not a symlink. Qt QML refuses to
-> load `bar-widget`/`panel` entry points through a symlinked directory
-> ("File name case mismatch"). After editing files in `plugin/`, run
-> `./sync.sh` to copy them over and hot-reload the shell.
+Root access is optional. A normal install provides the user plugin. A
+root-assisted install also adds the optional NetworkManager gateway hook,
+pacman/yay support, and its hardened helper.
 
 ## Install
 
-### Prerequisites
-
-This plugin targets an Omarchy installation with `omarchy`, `omarchy-shell`,
-`bash`, `jq`, and `iproute2` available. Bats is only required to run the test
-suite. Root access is optional: a normal install enables the user plugin,
-while `sudo ./install.sh` additionally installs the polkit rule, hardened
-root-owned helper, and NetworkManager dispatcher.
+From a checkout of this repository:
 
 ```sh
-./install.sh           # install/update the user plugin
-sudo ./install.sh      # same user install + privileged integrations
+./install.sh
 ```
 
-This copies `plugin/` to `~/.config/omarchy/plugins/abukiya.proxy` (a real
-directory — see layout note above), removes stale files from older releases,
-and re-enables the plugin. When invoked with `sudo`, it still installs into
-the invoking user's home (not `/root`) and additionally installs the optional
-polkit rule, root-owned sudoers helper, and NetworkManager dispatcher.
-
-For later source updates, run `./sync.sh`; it replaces the copied plugin
-directory and rescans Omarchy without changing proxy settings. Use
-`./install.sh` again when updating privileged system components.
-
-## Release notes
-
-### 1.0.0
-
-- Live bar widget and panel for proxy enable/disable.
-- Automatic phone-hotspot gateway detection and reapplication.
-- Environment, Git, npm, Yarn, pip, curl, browser, VS Code, and optional
-  pacman integrations.
-- Idempotent install/update flow with explicit configuration validation.
-- Hermes CLI/Desktop integration is deferred and is not part of this release.
-
-Afterwards:
+For the optional system integrations:
 
 ```sh
-omarchy-shell shell rescanPlugins
+sudo ./install.sh
+```
+
+The installer copies the plugin into
+`~/.config/omarchy/plugins/abukiya.proxy`, enables it, removes stale files
+from older plugin versions, and reloads Omarchy. When run with `sudo`, it
+still installs the user plugin into the invoking user's home rather than
+`/root`.
+
+Check that the plugin is available:
+
+```sh
 omarchy-shell abukiya.proxy status
 ```
 
-## Usage
+## Use it
 
-Bar widget (right side): the **󰓓 Proxy** icon shows proxy state (accent =
-enabled). Left-click opens/closes the proxy panel; the proxy itself is toggled
-from the panel's Enable/Disable switch. The panel also shows status rows for
-git, npm, yarn, pip, curl, VSCode, browser, and pacman integrations, and the
-configured endpoint.
+The Proxy icon appears on the right side of the Omarchy bar. Click it to open
+the panel, then use the switch to enable or disable the proxy.
 
-CLI:
+The same actions are available from the terminal:
 
 ```sh
-omarchy-shell abukiya.proxy status   # JSON: enabled, proxy, active integrations
+omarchy-shell abukiya.proxy status
 omarchy-shell abukiya.proxy enable
 omarchy-shell abukiya.proxy disable
 omarchy-shell abukiya.proxy toggle
 ```
 
-Config lives in `~/.config/omarchy/proxy.json`:
+On first enable, the gateway is detected from the active default route. The
+panel shows the configured endpoint and the integrations currently active.
+
+## Updating
+
+After changing files in `plugin/`, update the live plugin copy with:
+
+```sh
+./sync.sh
+```
+
+This replaces the copied plugin directory and reloads the Omarchy shell
+without changing your proxy settings. Run `./install.sh` again when updating
+the optional system components installed by the root-assisted install.
+
+## Configuration
+
+The user configuration is stored at:
+
+```text
+~/.config/omarchy/proxy.json
+```
+
+Example:
 
 ```json
 {
@@ -153,92 +109,65 @@ Config lives in `~/.config/omarchy/proxy.json`:
   "integrations": ["env", "git", "npm", "yarn", "pip", "curl", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
-  "enabled": true
+  "enabled": false
 }
 ```
 
-- `gatewayAuto: true` re-detects the gateway on every enable.
-- `port` controls the proxy port (default `8080`). Must be 1-65535.
-- `integrations` controls which tools are configured.
-- Invalid JSON or a non-string integration entry is rejected with an explicit
-  error; restore or fix `~/.config/omarchy/proxy.json` before enabling again.
+Most users only need to change `integrations` or `port`:
+
+- `gatewayAuto` refreshes the proxy endpoint from the current network route.
+- `port` selects the proxy service port and must be between 1 and 65535.
+- `integrations` controls which tools Proxy Manager configures.
+
+Invalid JSON or invalid integration data is rejected with an explicit error
+instead of being applied partially.
+
+## When the gateway changes
+
+Proxy Manager watches the default gateway and updates the endpoint
+automatically. New terminals, browser windows, Git, pip, and curl use the new
+endpoint without manual changes.
+
+Some applications cache proxy settings when they start. Restart VS Code and
+npm-related processes after a gateway change if they still use the old
+endpoint. Existing terminal and browser processes may also need restarting.
+
+If disabling the proxy leaves you without internet, Proxy Manager shows a
+notification. This usually means the phone hotspot requires its proxy service
+to remain enabled.
+
+## Remove it
+
+First clean up the settings it applied:
+
+```sh
+omarchy-shell abukiya.proxy disable
+```
+
+Then disable and remove the plugin:
+
+```sh
+omarchy plugin disable abukiya.proxy
+rm -rf ~/.config/omarchy/plugins/abukiya.proxy
+```
+
+If you installed the optional root components, remove those through your
+system's normal administrative process as described in `NOTES.md`.
 
 ## Testing
 
-The project includes a bats test suite with 77 tests covering all functions:
-
-```sh
-# Install bats if not present.
-git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats-core
-
-# Run all tests.
-/tmp/bats-core/bin/bats tests/proxy-manager.bats
-```
-
-Tests use isolated temp directories and stub commands — no system state is
-modified. Coverage includes: config management, all integration enable/disable
-functions (including `curl` via `~/.curlrc`), the browser wrapper standalone script, end-to-end status output,
-and the gateway-change command.
-
-Run the complete release check with:
+Maintainers can run the complete local validation suite with:
 
 ```sh
 ./check.sh
 ```
 
-Hermes CLI/Desktop proxy integration is intentionally deferred and is not
-included in this release.
+This checks shell syntax, sample JSON, and all 77 isolated Bats tests. The
+tests use temporary directories and stubs; they do not modify your real proxy,
+Omarchy, systemd, NetworkManager, or global tool configuration.
 
-## Removal
+## More detail
 
-1. Revert first: `omarchy-shell abukiya.proxy disable` (cleans all integrations).
-2. Then disable the plugin: `omarchy plugin disable abukiya.proxy`.
-3. Delete `~/.config/omarchy/plugins/abukiya.proxy` (the copied plugin dir) and
-   the repo.
-
-## Recent fixes
-
-- **Fresh-profile browser setup:** `enable_browser()` now creates
-  `~/.local/share/applications` before copying and patching browser launchers.
-  Browser integration therefore works on a clean user profile where the
-  applications directory does not yet exist.
-- **NetworkManager dispatcher argument handling:** the dispatcher now passes
-  the target home directory, plugin path, session bus address, runtime
-  directory, and notification body as positional arguments to `bash -c`
-  instead of interpolating them into shell command strings. This preserves
-  paths and notification text safely when the dispatcher runs as root.
-
-## Gotchas (learned the hard way)
-
-1. **`.bashrc` interactive guard** — the `# PROXY_SETTINGS` block MUST be
-   inserted *above* `[[ $- != *i* ]] && return`. The menu launches terminals
-   via non-interactive `bash -lc` (execDetached), so a block below the guard is
-   never sourced and `sudo pacman -S` from Menu -> Install gets no `http_proxy`.
-   `install_bashrc_block()` handles the placement; don't regress to a plain
-   `cat >>` (which appends below the guard).
-2. **`omarchy-launch-browser` strips Exec flags** — it reads only the first
-   token of a `.desktop` `Exec=` line, so baking `--proxy-server=...` into
-   launchers is pointless. Launchers route through `omarchy-proxy-<browser>`
-   wrappers that add the flag at launch time.
-3. **pacman must run last** in `apply()` — `enable_pacman` calls `pkexec`
-   (modal polkit dialog) and would block the browser/env steps behind it.
-4. **Status can lag ~2s** after toggle — the IPC `status` returns a cached
-   snapshot refreshed asynchronously; system state is correct immediately.
-5. **`/etc/sudoers.d` unreadable by the user** — existence checks use
-   `pkexec test -f`, not `[[ -f ]]`, which always fails on the directory perms.
-6. **Never resolve plugin paths from `manifest.__sourceDir`** — the shell
-   strips `__sourceDir` from third-party plugin manifests, so it is always
-   empty: IPC commands silently no-op and the panel shows *"Failed to
-   enable"*. Resolve siblings with `Qt.resolvedUrl("proxy-manager.sh")` in QML
-   (same idiom as `agx.screen-time`).
-7. **`curl` callers ignore shell env** — `Quickshell.Io.Process` inherits env
-   from the `quickshell` process at launch time. When the hotspot gateway
-   drifts (`127.0.0.1:8080` → `192.168.176.99:8080`), `http_proxy` in the
-   shell stays stale until restart, so any third-party plugin that shells
-   `curl` (Todoist `curl -K -` with stdin header, weather, etc.) gets
-   `Couldn’t reach … — check your connection`. Fix: `~/.curlrc`
-   `# PROXY_SETTINGS` `proxy`/`noproxy` is read by every `curl` invocation
-   independent of env. `enable_curl`/`disable_curl` manage only that block
-   (preserve other content, atomic `.tmp.$$`, `noproxy` conditional), and
-   `apply`/`apply_current`/watcher keep it fresh on gateway drift. No
-   per-plugin patch or shell restart needed.
+Technical implementation details, historical context, runtime files,
+troubleshooting notes, and maintainer guidance are kept in
+[NOTES.md](NOTES.md).
