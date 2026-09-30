@@ -67,7 +67,8 @@ proxy_manager/
   policy/
     60-abukiya-proxy.rules  polkit rule for passwordless pacman proxy
   tests/
-    proxy-manager.bats    bats test suite (60 tests)
+    proxy-manager.bats    bats test suite (77 tests)
+  check.sh               release validation (syntax, JSON, and tests)
   install.sh              (re)install: copy + enable
   sync.sh                 re-sync plugin/ to the live dir after edits
   docs/
@@ -84,14 +85,39 @@ proxy_manager/
 
 ## Install
 
+### Prerequisites
+
+This plugin targets an Omarchy installation with `omarchy`, `omarchy-shell`,
+`bash`, `jq`, and `iproute2` available. Bats is only required to run the test
+suite. Root access is optional: a normal install enables the user plugin,
+while `sudo ./install.sh` additionally installs the polkit rule, hardened
+root-owned helper, and NetworkManager dispatcher.
+
 ```sh
-./install.sh           # normal install
-sudo ./install.sh      # also installs NM dispatcher for auto gateway detection
+./install.sh           # install/update the user plugin
+sudo ./install.sh      # same user install + privileged integrations
 ```
 
 This copies `plugin/` to `~/.config/omarchy/plugins/abukiya.proxy` (a real
-directory — see layout note above) and re-enables the plugin. With `sudo`, it
-also installs the NetworkManager dispatcher script for connection events.
+directory — see layout note above), removes stale files from older releases,
+and re-enables the plugin. When invoked with `sudo`, it still installs into
+the invoking user's home (not `/root`) and additionally installs the optional
+polkit rule, root-owned sudoers helper, and NetworkManager dispatcher.
+
+For later source updates, run `./sync.sh`; it replaces the copied plugin
+directory and rescans Omarchy without changing proxy settings. Use
+`./install.sh` again when updating privileged system components.
+
+## Release notes
+
+### 1.0.0
+
+- Live bar widget and panel for proxy enable/disable.
+- Automatic phone-hotspot gateway detection and reapplication.
+- Environment, Git, npm, Yarn, pip, curl, browser, VS Code, and optional
+  pacman integrations.
+- Idempotent install/update flow with explicit configuration validation.
+- Hermes CLI/Desktop integration is deferred and is not part of this release.
 
 Afterwards:
 
@@ -134,10 +160,12 @@ Config lives in `~/.config/omarchy/proxy.json`:
 - `gatewayAuto: true` re-detects the gateway on every enable.
 - `port` controls the proxy port (default `8080`). Must be 1-65535.
 - `integrations` controls which tools are configured.
+- Invalid JSON or a non-string integration entry is rejected with an explicit
+  error; restore or fix `~/.config/omarchy/proxy.json` before enabling again.
 
 ## Testing
 
-The project includes a bats test suite with 71 tests covering all functions:
+The project includes a bats test suite with 77 tests covering all functions:
 
 ```sh
 # Install bats if not present.
@@ -151,6 +179,15 @@ Tests use isolated temp directories and stub commands — no system state is
 modified. Coverage includes: config management, all integration enable/disable
 functions (including `curl` via `~/.curlrc`), the browser wrapper standalone script, end-to-end status output,
 and the gateway-change command.
+
+Run the complete release check with:
+
+```sh
+./check.sh
+```
+
+Hermes CLI/Desktop proxy integration is intentionally deferred and is not
+included in this release.
 
 ## Removal
 

@@ -31,6 +31,7 @@ fi
 get_port() {
   local port
   if [[ -f "$CONFIG_FILE" ]]; then
+    validate_config || return 1
     port=$(jq -r '.port // 8080' "$CONFIG_FILE")
   else
     port=8080
@@ -53,6 +54,19 @@ detect_gateway_proxy() {
   fi
 }
 
+validate_config() {
+  [[ -f "$CONFIG_FILE" ]] || return 0
+  if ! jq -e '
+    type == "object" and
+    (.integrations == null or (.integrations | type == "array" and all(.[]; type == "string"))) and
+    (.port == null or (.port | type == "number" or type == "string"))
+  ' "$CONFIG_FILE" >/dev/null 2>&1; then
+    echo "error: invalid proxy configuration: $CONFIG_FILE" >&2
+    echo "error: expected a JSON object with an optional string-array integrations field" >&2
+    return 1
+  fi
+}
+
 read_config() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
     local url enabled
@@ -70,13 +84,14 @@ read_config() {
   "httpProxy": "$url",
   "httpsProxy": "$url",
   "noProxy": "localhost,127.0.0.1,::1",
-  "integrations": ["env", "git", "npm", "pip", "curl", "pacman", "browser", "vscode"],
+  "integrations": ["env", "git", "npm", "yarn", "pip", "curl", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
   "enabled": $enabled
 }
 EOF
   fi
+  validate_config || return 1
   cat "$CONFIG_FILE"
 }
 

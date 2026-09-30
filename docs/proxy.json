@@ -2,7 +2,7 @@
   "httpProxy": "http://192.168.1.1:8080",
   "httpsProxy": "http://192.168.1.1:8080",
   "noProxy": "localhost,127.0.0.1,::1",
-  "integrations": ["env", "git", "npm", "pip", "curl", "pacman", "browser", "vscode"],
+  "integrations": ["env", "git", "npm", "yarn", "pip", "curl", "pacman", "browser", "vscode"],
   "gatewayAuto": true,
   "port": 8080,
   "enabled": true

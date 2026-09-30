@@ -11,7 +11,14 @@ PLUGIN_DIR="$REPO_DIR/plugin"
 LIVE_PLUGIN_DIR="$HOME/.config/omarchy/plugins/abukiya.proxy"
 
 [[ -d "$PLUGIN_DIR" ]] || { echo "error: no plugin/ dir in $REPO_DIR" >&2; exit 1; }
+for command in cp mkdir rm; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "error: required command not found: $command" >&2
+    exit 1
+  }
+done
 
+rm -rf "$LIVE_PLUGIN_DIR"
 mkdir -p "$LIVE_PLUGIN_DIR"
 cp -a "$PLUGIN_DIR"/. "$LIVE_PLUGIN_DIR"/
 

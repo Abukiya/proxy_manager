@@ -68,6 +68,42 @@ BASHRC
   export WRAPPER_SRC="/dev/null"
 }
 
+@test "sync.sh replaces stale files in the live plugin copy" {
+  local live="$HOME/.config/omarchy/plugins/abukiya.proxy"
+  cat > "$HOME/bin/omarchy-shell" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  chmod +x "$HOME/bin/omarchy-shell"
+  mkdir -p "$live"
+  touch "$live/stale-from-older-release"
+
+  run env HOME="$HOME" PATH="$HOME/bin:$PATH" \
+    bash "$(dirname "$BATS_TEST_DIRNAME")/sync.sh"
+  [ "$status" -eq 0 ]
+  [ ! -e "$live/stale-from-older-release" ]
+  [ -f "$live/proxy-manager.sh" ]
+}
+
+@test "install.sh installs into the invoking user's home" {
+  local live="$HOME/.config/omarchy/plugins/abukiya.proxy"
+  cat > "$HOME/bin/omarchy" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  cat > "$HOME/bin/omarchy-shell" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  chmod +x "$HOME/bin/omarchy" "$HOME/bin/omarchy-shell"
+
+  run env HOME="$HOME" PATH="$HOME/bin:$PATH" \
+    bash "$(dirname "$BATS_TEST_DIRNAME")/install.sh"
+  [ "$status" -eq 0 ]
+  [ -f "$live/manifest.json" ]
+  [ -x "$live/proxy-manager.sh" ]
+}
+
 # ---------------------------------------------------------------------------
 # get_port
 # ---------------------------------------------------------------------------
@@ -126,6 +162,15 @@ EOF
   run get_port
   [ "$status" -eq 0 ]
   [ "$output" = "3128" ]
+}
+
+@test "get_port rejects malformed config" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  printf '{ invalid\n' > "$CONFIG_FILE"
+
+  run get_port
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid proxy configuration"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -205,6 +250,7 @@ STUB
   local proxy
   proxy=$(jq -r '.httpProxy' "$CONFIG_FILE")
   [ "$proxy" = "http://192.168.1.100:8080" ]
+  jq -e '.integrations | index("yarn") != null' "$CONFIG_FILE"
 }
 
 @test "read_config preserves existing config" {
@@ -357,6 +403,36 @@ EOF
 EOF
   run cfg_has_integration "npm"
   [ "$status" -eq 1 ]
+}
+
+@test "validate_config rejects malformed JSON" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  printf '{ invalid\n' > "$CONFIG_FILE"
+
+  run validate_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid proxy configuration"* ]]
+}
+
+@test "validate_config rejects non-string integrations" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "integrations": ["git", 42] }
+EOF
+
+  run validate_config
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"invalid proxy configuration"* ]]
+}
+
+@test "validate_config accepts a partial valid config" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{ "port": 3128, "integrations": ["git"] }
+EOF
+
+  run validate_config
+  [ "$status" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,8 @@ UI is two QML files that call the same IPC commands you'd run by hand.
     omarchy-proxy-browser         standalone browser wrapper script
     nm-dispatcher-proxy           NM dispatcher for connection events
   tests/
-    proxy-manager.bats            bats test suite (60 tests)
+    proxy-manager.bats            bats test suite (77 tests)
+    check.sh                      release validation (syntax, JSON, tests)
   install.sh                      (re)install: copy + enable
   sync.sh                         re-sync plugin/ to the live dir after edits
   docs/                           notes + sample config
@@ -36,8 +37,9 @@ UI is two QML files that call the same IPC commands you'd run by hand.
 `bar-widget`/`panel` entry points through a symlinked directory — it reports
 "File name case mismatch" for every widget/panel component (services loaded
 through the symlink still worked, which made this very confusing to debug).
-After editing files in `plugin/`, run `./sync.sh` to copy them over and
-hot-reload the shell.
+After editing files in `plugin/`, run `./sync.sh` to replace the copied plugin
+directory and hot-reload the shell. Run `./install.sh` again when privileged
+system components also changed.
 
 The plugin's live config/state lives outside the repo:
 - `~/.config/omarchy/proxy.json` — config (gatewayAuto, integrations, port, enabled)
