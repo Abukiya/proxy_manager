@@ -27,19 +27,19 @@ UI is two QML files that call the same IPC commands you'd run by hand.
 
 ```
 ~/proxy_manager/                  <- this project (git repo)
-  plugin/                         <- copied into omarchy as the live plugin
-    manifest.json
-    Service.qml                   IPC service (omarchy-shell abukiya.proxy ...)
-    BarWidget.qml                 bar icon; click opens/closes the panel
-    Panel.qml                     enable/disable switch + status rows
-    proxy-manager.sh              all the logic
-    omarchy-proxy-browser         standalone browser wrapper script
-    nm-dispatcher-proxy           NM dispatcher for connection events
+  manifest.json                   <- root-plugin manifest
+  Service.qml                     IPC service (omarchy-shell abukiya.proxy ...)
+  BarWidget.qml                   bar icon; click opens/closes the panel
+  Panel.qml                       enable/disable switch + status rows
+  proxy-manager.sh                all the logic
+  omarchy-proxy-browser            standalone browser wrapper script
+  nm-dispatcher-proxy              NM dispatcher for connection events
   tests/
-    proxy-manager.bats            bats test suite (77 tests)
+    proxy-manager.bats            bats test suite (78 tests)
     check.sh                      release validation (syntax, JSON, tests)
-  install.sh                      (re)install: copy + enable
-  sync.sh                         re-sync plugin/ to the live dir after edits
+  install.sh                      compatibility installer for local checkouts
+  sync.sh                         re-sync the root plugin to the live dir
+  setup-system-integrations.sh    explicit privileged setup
   docs/                           notes + sample config
   README.md                       install/usage/removal
   NOTES.md                        this file
@@ -50,9 +50,11 @@ UI is two QML files that call the same IPC commands you'd run by hand.
 `bar-widget`/`panel` entry points through a symlinked directory — it reports
 "File name case mismatch" for every widget/panel component (services loaded
 through the symlink still worked, which made this very confusing to debug).
-After editing files in `plugin/`, run `./sync.sh` to replace the copied plugin
-directory and hot-reload the shell. Run `./install.sh` again when privileged
-system components also changed.
+Public users install with `omarchy plugin add <repo-url> --enable` and update
+with `omarchy plugin update abukiya.proxy --yes`. During local development,
+run `./sync.sh` to replace the copied plugin directory and hot-reload the
+shell. Run `sudo ./setup-system-integrations.sh` when privileged system
+components are needed or changed.
 
 The plugin's live config/state lives outside the repo:
 - `~/.config/omarchy/proxy.json` — config (gatewayAuto, integrations, port, enabled)
@@ -130,7 +132,8 @@ sessions, new browser windows (wrapper reads live gateway).
 ### NetworkManager dispatcher
 
 `nm-dispatcher-proxy` is installed to `/etc/NetworkManager/dispatcher.d/`
-(needs `sudo ./install.sh`). Fires on `up` events (initial connection).
+(needs `sudo ./setup-system-integrations.sh`). Fires on `up` events (initial
+connection).
 For mid-connection gateway changes (DHCP renewals), the polling watcher
 handles detection. The dispatcher is a fallback, not the primary mechanism.
 
@@ -174,7 +177,9 @@ handles detection. The dispatcher is a fallback, not the primary mechanism.
 
 6. **Qt QML rejects symlinked plugin dirs** — "File name case mismatch" on
    widget/panel entry points. The fix that finally landed: the live plugin dir
-   is a real directory, kept in sync from the repo with `./sync.sh`.
+   is a real directory, kept in sync from the repo with `./sync.sh` during
+   development. Omarchy's plugin manager performs the equivalent copy for
+   public installs.
    Debugging notes from that hunt: the failure was *per-URL* and cached
    in-memory by the running shell — a URL that first failed (e.g. while the dir
    was a symlink) kept failing for the whole shell session even after the dir
@@ -282,7 +287,7 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   `systemctl --user` + D-Bus activation env with `VAR=` then re-unsets
   (covers `NODE_USE_ENV_PROXY`; see gotcha #14). `disable_pip` deduplicates
   stacked `[global]` and `disable_yarn` handles both `delete` and `unset`.
-- **77 bats tests:** cover all functions — config management, every `curl` via `~/.curlrc`,
+- **78 bats tests:** cover all functions — config management, every `curl` via `~/.curlrc`,
   enable/disable integration, the browser wrapper standalone script,
   end-to-end status output, and gateway-change command.
   Run with `/tmp/bats-core/bin/bats tests/proxy-manager.bats`.
@@ -311,10 +316,12 @@ used google-chrome/chrome aliases (you use chromium, so they're dead weight).
   (always refreshed). Now it reads `auto=$(cfg_get '.gatewayAuto')` and
   early-returns on `== "false"` / empty, so `false` is respected. Test 47
   documents the old bug.
-- The plugin lives in a git repo (`~/proxy_manager`), copied into omarchy's
-  plugin dir and kept in sync with `./sync.sh`.
+- The plugin lives in a public root-plugin git repo (`~/proxy_manager`).
+  Public users install it with `omarchy plugin add`; local development uses
+  `./sync.sh` to copy the root plugin into Omarchy.
 - **Repo/live drift:** during the "cleaner" rework the live plugin dir
   (`~/.config/omarchy/plugins/abukiya.proxy`) got ahead of the repo (the
   self-cleaning bashrc, connectivity probe, `timeout 5 pkexec`, `--no-check`,
   D-Bus update). All of that plus the fixes above were synced back
-  repo ← live, so `diff -r plugin <live dir>` is now clean.
+  repo <- live, so `diff -r . <live dir>` should be interpreted carefully:
+  the live copy is expected to omit repository metadata in future workflows.

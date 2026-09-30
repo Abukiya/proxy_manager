@@ -25,7 +25,7 @@ fi
 }
 
 echo "checking shell syntax..."
-bash -n "$REPO_DIR"/install.sh "$REPO_DIR"/sync.sh "$REPO_DIR"/plugin/*.sh
+bash -n "$REPO_DIR"/install.sh "$REPO_DIR"/sync.sh "$REPO_DIR"/setup-system-integrations.sh "$REPO_DIR"/*.sh
 echo "checking JSON..."
 jq empty "$REPO_DIR/docs/proxy.json"
 echo "running tests..."

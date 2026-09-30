@@ -61,7 +61,7 @@ BASHRC
   # bottom: `NO_CHECK=false` + arg scan + `case "$CMD" in`).
   local func_file="$BATS_TEST_TMPDIR/functions.sh"
   sed -n '/^set -/d; /^NO_CHECK=/q; p' \
-    "$(dirname "$BATS_TEST_DIRNAME")/plugin/proxy-manager.sh" > "$func_file"
+    "$(dirname "$BATS_TEST_DIRNAME")/proxy-manager.sh" > "$func_file"
   # shellcheck disable=SC1090
   source "$func_file"
   # Override WRAPPER_SRC after sourcing (the script reassigns it).
@@ -102,6 +102,13 @@ STUB
   [ "$status" -eq 0 ]
   [ -f "$live/manifest.json" ]
   [ -x "$live/proxy-manager.sh" ]
+}
+
+@test "setup-system-integrations.sh requires explicit root privileges" {
+  run env HOME="$HOME" PATH="$HOME/bin:$PATH" \
+    bash "$(dirname "$BATS_TEST_DIRNAME")/setup-system-integrations.sh"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"run this command with sudo"* ]]
 }
 
 # ---------------------------------------------------------------------------
@@ -960,7 +967,7 @@ FAKE
 
   # Run the wrapper as "omarchy-proxy-chromium".
   local wrapper="$BATS_TEST_TMPDIR/omarchy-proxy-chromium"
-  cp "$(dirname "$BATS_TEST_DIRNAME")/plugin/omarchy-proxy-browser" "$wrapper"
+  cp "$(dirname "$BATS_TEST_DIRNAME")/omarchy-proxy-browser" "$wrapper"
   chmod +x "$wrapper"
 
   run "$wrapper" --some-flag
@@ -980,7 +987,7 @@ FAKE
 
   # No state file.
   local wrapper="$BATS_TEST_TMPDIR/omarchy-proxy-chromium"
-  cp "$(dirname "$BATS_TEST_DIRNAME")/plugin/omarchy-proxy-browser" "$wrapper"
+  cp "$(dirname "$BATS_TEST_DIRNAME")/omarchy-proxy-browser" "$wrapper"
   chmod +x "$wrapper"
 
   run "$wrapper"
@@ -998,7 +1005,7 @@ FAKE
   export PATH="$HOME/bin:$PATH"
 
   local wrapper="$BATS_TEST_TMPDIR/omarchy-proxy-chromium"
-  cp "$(dirname "$BATS_TEST_DIRNAME")/plugin/omarchy-proxy-browser" "$wrapper"
+  cp "$(dirname "$BATS_TEST_DIRNAME")/omarchy-proxy-browser" "$wrapper"
   chmod +x "$wrapper"
 
   run "$wrapper"

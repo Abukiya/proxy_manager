@@ -38,23 +38,27 @@ pacman/yay support, and its hardened helper.
 
 ## Install
 
-From a checkout of this repository:
+Install the public plugin directly through Omarchy:
 
 ```sh
-./install.sh
+omarchy plugin add https://github.com/Abukiya/proxy_manager.git --enable
 ```
 
-For the optional system integrations:
+Omarchy clones the repository, validates the manifest, installs the plugin
+under `~/.config/omarchy/plugins/abukiya.proxy`, and enables it. No root
+access is needed for the main user-level features.
+
+The repository's `./install.sh` remains available for local development
+checkouts, but it is not required for normal users. Optional system
+integrations are separate and must be explicitly installed:
 
 ```sh
-sudo ./install.sh
+sudo ./setup-system-integrations.sh
 ```
 
-The installer copies the plugin into
-`~/.config/omarchy/plugins/abukiya.proxy`, enables it, removes stale files
-from older plugin versions, and reloads Omarchy. When run with `sudo`, it
-still installs the user plugin into the invoking user's home rather than
-`/root`.
+That optional setup adds the NetworkManager gateway hook, pacman/yay support,
+and the hardened root-owned helper. It does not run as part of
+`omarchy plugin add`.
 
 Check that the plugin is available:
 
@@ -81,15 +85,16 @@ panel shows the configured endpoint and the integrations currently active.
 
 ## Updating
 
-After changing files in `plugin/`, update the live plugin copy with:
+Update an Omarchy-managed installation with:
 
 ```sh
-./sync.sh
+omarchy plugin update abukiya.proxy --yes
 ```
 
-This replaces the copied plugin directory and reloads the Omarchy shell
-without changing your proxy settings. Run `./install.sh` again when updating
-the optional system components installed by the root-assisted install.
+For a local checkout, `./sync.sh` replaces the live plugin directory and
+reloads the Omarchy shell without changing your proxy settings. Re-run
+`sudo ./setup-system-integrations.sh` after changing the optional privileged
+files.
 
 ## Configuration
 
@@ -151,8 +156,9 @@ omarchy plugin disable abukiya.proxy
 rm -rf ~/.config/omarchy/plugins/abukiya.proxy
 ```
 
-If you installed the optional root components, remove those through your
-system's normal administrative process as described in `NOTES.md`.
+If you installed the optional root components, remove them through your
+system's normal administrative process as described in `NOTES.md`; disabling
+or removing the plugin does not remove privileged system files.
 
 ## Testing
 
@@ -162,7 +168,7 @@ Maintainers can run the complete local validation suite with:
 ./check.sh
 ```
 
-This checks shell syntax, sample JSON, and all 77 isolated Bats tests. The
+This checks shell syntax, sample JSON, and all 78 isolated Bats tests. The
 tests use temporary directories and stubs; they do not modify your real proxy,
 Omarchy, systemd, NetworkManager, or global tool configuration.
 

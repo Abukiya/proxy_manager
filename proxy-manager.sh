@@ -19,7 +19,7 @@ BASHRC="$HOME/.bashrc"
 STATE_DIR="$HOME/.config/hotspot-proxy"
 USER_APPS="$HOME/.local/share/applications"
 BROWSERS="chromium google-chrome-stable chromium-browser brave-browser google-chrome"
-# Prefer a root-owned system helper (installed to /usr/local/bin by sudo ./install.sh)
+# Prefer a root-owned system helper (installed by setup-system-integrations.sh).
 # -- not writable by the user, so tampering can't escalate to root. Falls back
 # to the per-user plugin copy when the system helper is absent.
 if [[ -x /usr/local/bin/omarchy-proxy-sudoers-helper ]]; then
