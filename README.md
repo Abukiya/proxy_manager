@@ -159,6 +159,18 @@ and the gateway-change command.
 3. Delete `~/.config/omarchy/plugins/abukiya.proxy` (the copied plugin dir) and
    the repo.
 
+## Recent fixes
+
+- **Fresh-profile browser setup:** `enable_browser()` now creates
+  `~/.local/share/applications` before copying and patching browser launchers.
+  Browser integration therefore works on a clean user profile where the
+  applications directory does not yet exist.
+- **NetworkManager dispatcher argument handling:** the dispatcher now passes
+  the target home directory, plugin path, session bus address, runtime
+  directory, and notification body as positional arguments to `bash -c`
+  instead of interpolating them into shell command strings. This preserves
+  paths and notification text safely when the dispatcher runs as root.
+
 ## Gotchas (learned the hard way)
 
 1. **`.bashrc` interactive guard** — the `# PROXY_SETTINGS` block MUST be

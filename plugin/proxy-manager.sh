@@ -524,7 +524,7 @@ enable_browser() {
 
   write_wrapper
   ensure_wrapper_links
-  mkdir -p "$STATE_DIR"
+  mkdir -p "$STATE_DIR" "$USER_APPS"
   echo "$url" > "$STATE_DIR/gateway"
 
   for name in $BROWSERS; do

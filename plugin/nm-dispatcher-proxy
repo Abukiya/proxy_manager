@@ -51,7 +51,7 @@ done
 [[ -n "$PROXY_MANAGER" ]] || exit 0
 
 # Run gateway-change as the desktop user.
-RESULT=$(su -s /bin/bash -c "HOME='$TARGET_HOME' bash '$PROXY_MANAGER' gateway-change" "$TARGET_USER" 2>/dev/null) || exit 0
+RESULT=$(su -s /bin/bash -c 'env HOME="$1" bash "$2" gateway-change' _ "$TARGET_HOME" "$PROXY_MANAGER" 2>/dev/null) || exit 0
 
 # Parse the result.
 changed=$(echo "$RESULT" | jq -r '.gatewayChanged // false' 2>/dev/null)
@@ -71,12 +71,6 @@ fi
 
 # Send desktop notification via the user's session bus.
 DBUS_ADDR="unix:path=/run/user/$TARGET_UID/bus"
-su -s /bin/bash -c "
-  export DBUS_SESSION_BUS_ADDRESS='$DBUS_ADDR'
-  export XDG_RUNTIME_DIR='/run/user/$TARGET_UID'
-  notify-send -a omarchy-action -i network-proxy \
-    'Gateway changed' \
-    '$body'
-" "$TARGET_USER" 2>/dev/null || true
+su -s /bin/bash -c 'export DBUS_SESSION_BUS_ADDRESS="$1"; export XDG_RUNTIME_DIR="$2"; notify-send -a omarchy-action -i network-proxy "Gateway changed" "$3"' _ "$DBUS_ADDR" "/run/user/$TARGET_UID" "$body" 2>/dev/null || true
 
 exit 0
