@@ -291,11 +291,12 @@ Item {
               iconOpacity: root.pending ? 0.7 : 1.0
 
               iconComponent: Component {
-                Text {
-                  text: "\uF04D3"
+                ProxyIcon {
+                  width: Style.font.display
+                  height: Style.font.display
+                  iconSize: Style.font.display
                   color: header.iconColor
-                  font.family: hero.fontFamily
-                  font.pixelSize: Style.font.display
+                  opacity: header.toggleBusy ? 0.7 : 1
                 }
               }
 

@@ -34,7 +34,6 @@ BarWidget {
     statusProc.running = true
   }
 
-  readonly property string iconText: "\uF04D3"
   readonly property bool iconActive: root.proxyEnabled
 
   function onStatus(raw) {
@@ -86,7 +85,8 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.iconText
+    text: " "
+    keepSpace: true
     tooltipText: root.proxyEnabled
       ? "Proxy on \u2014 click to open the panel"
       : "Proxy off \u2014 click to open the panel"
@@ -97,6 +97,15 @@ BarWidget {
     onPressed: function(b) {
       if (b !== 1) return
       root.open()
+    }
+
+    ProxyIcon {
+      anchors.centerIn: parent
+      iconSize: Style.font.icon
+      width: Style.font.icon
+      height: Style.font.icon
+      color: button.active && button.useActiveColor ? button.activeColor : button.foreground
+      opacity: root.proxyEnabled ? 1 : 0.7
     }
   }
 }
