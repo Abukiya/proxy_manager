@@ -587,20 +587,28 @@ EOF
   grep -q 'unset http_proxy' "$BASHRC"
 }
 
-@test "disable_env unsets uppercase systemctl env vars" {
+@test "disable_env keeps stale systemd proxy variables empty" {
   local log="$BATS_TEST_TMPDIR/systemctl_calls.log"
   cat > "$HOME/bin/systemctl" <<STUB
 #!/bin/bash
 echo "\$@" >> "$log"
+if [[ "\$1" == "--user" && "\$2" == "show-environment" ]]; then
+  echo "http_proxy=http://127.0.0.1:8080"
+fi
 exit 0
 STUB
   chmod +x "$HOME/bin/systemctl"
 
+  cat > "$HOME/bin/dbus-update-activation-environment" <<'STUB'
+#!/bin/bash
+exit 0
+STUB
+  chmod +x "$HOME/bin/dbus-update-activation-environment"
+
   run disable_env
   [ "$status" -eq 0 ]
-  grep -q 'HTTP_PROXY' "$log"
-  grep -q 'HTTPS_PROXY' "$log"
-  grep -q 'NO_PROXY' "$log"
+  grep -q 'set-environment.*http_proxy=' "$log"
+  ! grep -q 'unset-environment.*http_proxy' "$log"
 }
 
 # ---------------------------------------------------------------------------
