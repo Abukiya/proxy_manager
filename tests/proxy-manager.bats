@@ -1160,6 +1160,60 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# set_integrations
+
+@test "set_integrations updates the selected set while disabled" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://192.168.1.1:8080",
+  "httpsProxy": "http://192.168.1.1:8080",
+  "integrations": ["env", "git"],
+  "enabled": false
+}
+EOF
+
+  run set_integrations "git,curl,vscode"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.integrations' "$CONFIG_FILE")" = '["git","curl","vscode"]' ]
+}
+
+@test "set_integrations rejects unsupported tools without changing config" {
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "integrations": ["env", "git"],
+  "enabled": false
+}
+EOF
+
+  run set_integrations "git,unknown"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"unsupported integration: unknown"* ]]
+  [ "$(jq -c '.integrations' "$CONFIG_FILE")" = '["env","git"]' ]
+}
+
+@test "set_integrations removes deselected settings and applies additions" {
+  mkdir -p "$(dirname "$CONFIG_FILE")" "$ENV_DIR"
+  cat > "$CONFIG_FILE" <<'EOF'
+{
+  "httpProxy": "http://192.168.1.1:8080",
+  "httpsProxy": "http://192.168.1.1:8080",
+  "noProxy": "localhost",
+  "integrations": ["env", "git"],
+  "enabled": true
+}
+EOF
+  printf 'http_proxy=http://192.168.1.1:8080\n' > "$ENV_DIR/proxy.conf"
+
+  run set_integrations "git,curl"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c '.integrations' "$CONFIG_FILE")" = '["git","curl"]' ]
+  [ ! -f "$ENV_DIR/proxy.conf" ]
+  grep -q '^proxy = "http://192.168.1.1:8080"$' "$HOME/.curlrc"
+}
+
+# ---------------------------------------------------------------------------
 # enable_curl / disable_curl
 # ---------------------------------------------------------------------------
 

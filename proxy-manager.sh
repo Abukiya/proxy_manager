@@ -655,6 +655,64 @@ apply_current() {
   done
 }
 
+# ---------------------------------------------------------- integration config
+
+normalize_integrations() {
+  local csv="$1" name result="[]" item
+  IFS=',' read -ra items <<< "$csv"
+  for item in "${items[@]}"; do
+    name="$item"
+    [[ -n "$name" ]] || continue
+    case "$name" in
+      env|git|npm|yarn|pip|curl|pacman|browser|vscode) ;;
+      *)
+        echo "error: unsupported integration: $name" >&2
+        return 1
+        ;;
+    esac
+    result=$(jq --arg name "$name" \
+      'if index($name) == null then . + [$name] else . end' <<< "$result")
+  done
+  printf '%s\n' "$result"
+}
+
+_write_integrations_locked() {
+  local integrations="$1"
+  read_config | jq --argjson integrations "$integrations" \
+    '.integrations = $integrations' > "$CONFIG_FILE.tmp"
+  mv "$CONFIG_FILE.tmp" "$CONFIG_FILE"
+}
+
+set_integrations() {
+  local csv="${1:-}" selected old enabled name
+  selected=$(normalize_integrations "$csv") || return 1
+  old=$(cfg_get '.integrations // []')
+  enabled=$(cfg_get '.enabled // false')
+
+  # Remove settings for deselected integrations before changing the config,
+  # because disable_* functions are gated by the configured integration list.
+  if [[ "$enabled" == "true" ]]; then
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      "disable_${name}"
+    done < <(jq -nr --argjson old "$old" --argjson new "$selected" \
+      '$old[] as $item | select(($new | index($item)) == null) | $item')
+  fi
+
+  with_config_lock _write_integrations_locked "$selected"
+
+  if [[ "$enabled" == "true" ]]; then
+    while IFS= read -r name; do
+      [[ -n "$name" ]] || continue
+      "enable_${name}"
+    done < <(jq -nr --argjson old "$old" --argjson new "$selected" \
+      '$new[] as $item | select(($old | index($item)) == null) | $item')
+  fi
+
+  mkdir -p "$STATE_DIR"
+  cmd_status | tee "$STATE_DIR/live-status.json"
+}
+
 # ------------------------------------------------------------- gateway-watcher
 
 WATCHER_PID_FILE="$STATE_DIR/gateway-watcher.pid"
@@ -822,10 +880,15 @@ cmd_gateway_change() {
 
 NO_CHECK=false
 CMD=""
+INTEGRATIONS_ARG=""
 for arg in "$@"; do
   case "$arg" in
     --no-check) NO_CHECK=true ;;
     status|enable|disable|gateway-change|start-watcher|stop-watcher) CMD="$arg" ;;
+    set-integrations)
+      CMD="$arg"
+      INTEGRATIONS_ARG="${2:-}"
+      ;;
   esac
 done
 CMD="${CMD:-status}"
@@ -870,8 +933,11 @@ case "$CMD" in
   stop-watcher)
     stop_watcher
     ;;
+  set-integrations)
+    set_integrations "$INTEGRATIONS_ARG"
+    ;;
   *)
-    echo "usage: proxy-manager.sh <status|enable|disable [--no-check]|gateway-change|start-watcher|stop-watcher>" >&2
+    echo "usage: proxy-manager.sh <status|enable|disable [--no-check]|set-integrations <csv>|gateway-change|start-watcher|stop-watcher>" >&2
     exit 1
     ;;
 esac

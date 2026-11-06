@@ -88,8 +88,8 @@ BarWidget {
     text: " "
     keepSpace: true
     tooltipText: root.proxyEnabled
-      ? "Proxy on \u2014 click to open the panel"
-      : "Proxy off \u2014 click to open the panel"
+      ? "Proxy enabled \u2014 open panel to review integrations"
+      : "Proxy disabled \u2014 open panel to enable"
     activeColor: bar ? bar.barForeground : Color.foreground
     active: root.iconActive
     fixedWidth: root.bar && root.bar.vertical ? -1 : Style.space(27)

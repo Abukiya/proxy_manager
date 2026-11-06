@@ -7,7 +7,7 @@
 
   [![Omarchy plugin](https://img.shields.io/badge/Omarchy-plugin-7c3aed?style=flat-square)](https://omarchy.org/)
   [![Shell](https://img.shields.io/badge/Bash-4%2B-4EAA25?style=flat-square&logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
-  [![Tests](https://img.shields.io/badge/tests-78-2ea44f?style=flat-square)](tests/proxy-manager.bats)
+  [![Tests](https://img.shields.io/badge/tests-81-2ea44f?style=flat-square)](tests/proxy-manager.bats)
 
   [Install](#installation) · [Use](#usage) · [Configure](#configuration) · [Develop](#development)
 </div>
@@ -27,6 +27,7 @@ you disable it.
 - Detects the active default-route gateway and builds the proxy URL.
 - Watches for gateway changes and reapplies enabled integrations automatically.
 - Provides an Omarchy bar indicator, panel, and IPC-backed CLI.
+- Lets you choose which integrations receive proxy settings from the panel.
 - Integrates environment variables, Git, npm, Yarn, pip, curl, browsers,
   VS Code, and optional pacman/yay support.
 - Preserves unrelated configuration and removes only the settings it owns.
@@ -85,7 +86,10 @@ omarchy-shell abukiya.proxy status
 
 Click the **Proxy** icon on the right side of the Omarchy bar to open the
 panel. Use the switch to enable or disable the proxy. The panel shows the
-current endpoint and the integrations that are active.
+current endpoint and the integrations that are active. Select **Edit** beside
+Integrations to choose which tools receive proxy settings; apply changes while
+the proxy is enabled to update them immediately, or while it is disabled to
+save the selection for the next enable.
 
 The same operations are available from a terminal:
 
@@ -94,6 +98,7 @@ omarchy-shell abukiya.proxy status
 omarchy-shell abukiya.proxy enable
 omarchy-shell abukiya.proxy disable
 omarchy-shell abukiya.proxy toggle
+omarchy-shell abukiya.proxy setIntegrations git,curl,vscode
 ```
 
 `status` prints JSON, which makes it suitable for scripts:
@@ -187,7 +192,7 @@ Run the release checks from the repository root:
 ./check.sh
 ```
 
-The check validates shell syntax, parses the sample JSON, and runs all 78 Bats
+The check validates shell syntax, parses the sample JSON, and runs all 81 Bats
 tests in temporary directories. The tests stub external commands and do not
 modify your real proxy, Omarchy, systemd, NetworkManager, or global tool
 configuration.
