@@ -50,6 +50,11 @@ Item {
   property var status: null
   property bool pending: false
   property bool targetEnabled: false
+  property bool editingIntegrations: false
+  property bool integrationsPending: false
+  property string integrationsError: ""
+  property var draftIntegrations: []
+  property var targetIntegrations: []
 
   // Value the toggle switch renders: optimistic while pending, otherwise the
   // authoritative enabled flag from the latest status snapshot.
@@ -77,15 +82,74 @@ Item {
     onTriggered: root.lastError = ""
   }
 
+  property Timer integrationsGuard: Timer {
+    interval: 8000
+    onTriggered: {
+      root.integrationsPending = false
+      root.integrationsError = "Failed to save integrations"
+    }
+  }
+
   readonly property var integrationList: [
+    { key: "env", label: "Shell environment" },
     { key: "git", label: "Git" },
     { key: "npm", label: "npm" },
-    { key: "yarn", label: "yarn" },
+    { key: "yarn", label: "Yarn" },
     { key: "pip", label: "pip" },
+    { key: "curl", label: "curl" },
     { key: "vscode", label: "VS Code" },
-    { key: "browser", label: "Browser" },
+    { key: "browser", label: "Browsers" },
     { key: "pacman", label: "Pacman / Yay" }
   ]
+
+  function hasIntegration(list, key) {
+    return list && list.indexOf(key) !== -1
+  }
+
+  function sameIntegrations(left, right) {
+    if (!left || !right || left.length !== right.length) return false
+    for (var i = 0; i < left.length; i++) {
+      if (left[i] !== right[i]) return false
+    }
+    return true
+  }
+
+  function beginIntegrationEdit() {
+    if (root.integrationsPending || !root.status) return
+    root.draftIntegrations = root.status.integrations
+      ? root.status.integrations.slice()
+      : []
+    root.integrationsError = ""
+    root.editingIntegrations = true
+  }
+
+  function toggleIntegrationSelection(key) {
+    if (!root.editingIntegrations || root.integrationsPending) return
+    var next = root.draftIntegrations.slice()
+    var index = next.indexOf(key)
+    if (index === -1) next.push(key)
+    else next.splice(index, 1)
+    root.draftIntegrations = next
+  }
+
+  function cancelIntegrationEdit() {
+    if (root.integrationsPending) return
+    root.editingIntegrations = false
+    root.integrationsError = ""
+  }
+
+  function saveIntegrations() {
+    if (!root.editingIntegrations || root.integrationsPending
+        || root.sameIntegrations(root.draftIntegrations, root.status.integrations || []))
+      return
+    root.targetIntegrations = root.draftIntegrations.slice()
+    root.integrationsPending = true
+    root.integrationsError = ""
+    root.integrationsGuard.restart()
+    root.editingIntegrations = false
+    Util.execDetached("omarchy-shell abukiya.proxy setIntegrations "
+      + root.targetIntegrations.join(","))
+  }
 
   function integrationActive(key) {
     return root.status && root.status.active ? root.status.active[key] === true : false
@@ -111,11 +175,65 @@ Item {
     return !!(root.status.httpProxy || root.status.httpsProxy)
   }
 
+  readonly property string endpointSummary: {
+    if (!root.status) return "Reading gateway status"
+    if (!root.endpointHasValue) {
+      return root.displayEnabled
+        ? "No gateway detected"
+        : "Detected automatically when enabled"
+    }
+    if (root.status.httpProxy && root.status.httpsProxy
+        && root.status.httpProxy !== root.status.httpsProxy)
+      return "HTTP and HTTPS use different gateways"
+    return "Detected from the active network"
+  }
+
+  readonly property int configuredIntegrationCount: {
+    if (!root.status || !root.status.integrations) return 0
+    return root.integrationList.filter(function(item) {
+      return root.status.integrations.indexOf(item.key) !== -1
+    }).length
+  }
+
+  readonly property int activeIntegrationCount: {
+    if (!root.status || !root.status.active) return 0
+    return root.integrationList.filter(function(item) {
+      return root.status.active[item.key] === true
+    }).length
+  }
+
+  function integrationState(key) {
+    if (!root.status) return "Reading"
+    if (!root.status.integrations
+        || root.status.integrations.indexOf(key) === -1)
+      return "Not configured"
+    if (root.integrationActive(key)) return "Active"
+    return root.displayEnabled ? "Unavailable" : "Ready"
+  }
+
+  function integrationDescription(item) {
+    var configured = root.status && root.status.integrations
+      && root.status.integrations.indexOf(item.key) !== -1
+    if (!root.status) return "Reading integration status"
+    if (!configured) return item.label + " is not configured"
+    if (root.integrationActive(item.key)) return item.label + " is active"
+    if (!root.displayEnabled) return "Enable the proxy to activate " + item.label
+    return item.label + " is configured but not active"
+  }
+
   function parseStatus(raw) {
     var obj = null
     try { obj = JSON.parse(String(raw || "").trim()) } catch (e) {}
     if (!obj) return
     root.status = obj
+    if (root.integrationsPending
+        && root.sameIntegrations(obj.integrations || [], root.targetIntegrations)) {
+      root.integrationsPending = false
+      root.integrationsGuard.stop()
+      root.integrationsError = ""
+    }
+    if (!root.editingIntegrations && !root.integrationsPending)
+      root.draftIntegrations = obj.integrations ? obj.integrations.slice() : []
     if (root.pending) {
       if (obj.enabled === root.targetEnabled) {
         root.pending = false
@@ -320,58 +438,60 @@ Item {
             }
           }
 
+          Text {
+            width: parent.width
+            text: root.lastError
+              ? "Try refresh, or check the active network before enabling again."
+              : root.pending
+                ? "Waiting for the system to confirm the new proxy state."
+                : root.displayEnabled
+                  ? "Traffic is routed through the detected gateway."
+                  : "Proxy settings are not applied to your tools."
+            color: root.lastError ? root.accent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+            maximumLineCount: 2
+          }
+
           PanelSeparator {
             foreground: root.foreground
           }
 
           // -------------------------------------------------------- endpoint
           PanelSectionHeader {
-            text: "ENDPOINT"
+            text: "Endpoint"
             foreground: root.foreground
             fontFamily: root.fontFamily
           }
 
           Item {
             width: parent.width
-            implicitHeight: Math.max(epLabel.implicitHeight, epChip.implicitHeight)
+            implicitHeight: epLabel.implicitHeight + epSummary.implicitHeight
+              + Style.spacing.xs
 
             Text {
               id: epLabel
               anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Gateway"
-              color: root.dim
+              anchors.top: parent.top
+              text: root.endpointText
+              color: root.endpointHasValue ? root.foreground : root.dimmer
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
+              width: parent.width
+              wrapMode: Text.WrapAnywhere
+              maximumLineCount: 2
             }
 
-            // The address in a pill, eliding the middle so a long
-            // phone-hotspot URL keeps its recognizable tail. When httpProxy
-            // and httpsProxy differ, both are shown on separate lines.
-            BorderSurface {
-              id: epChip
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              width: Math.min(implicitWidth, parent.width - epLabel.implicitWidth - Style.space(16))
-              implicitWidth: epValue.implicitWidth + Style.space(14)
-              implicitHeight: epValue.implicitHeight + Style.space(6)
-              radius: Style.cornerRadius
-              color: "transparent"
-              borderSpec: Border.controlSpec("normal", root.foreground, root.accent)
-
-              Text {
-                id: epValue
-                anchors.centerIn: parent
-                width: parent.width - Style.space(14)
-                horizontalAlignment: Text.AlignHCenter
-                wrapMode: Text.WrapAnywhere
-                maximumLineCount: 2
-                elide: Text.ElideMiddle
-                text: root.endpointText
-                color: root.endpointHasValue ? root.foreground : root.dimmer
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
+            Text {
+              id: epSummary
+              anchors.left: parent.left
+              anchors.top: epLabel.bottom
+              width: parent.width
+              text: root.endpointSummary
+              color: root.endpointHasValue ? root.dim : root.dimmer
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
             }
           }
 
@@ -380,27 +500,170 @@ Item {
           }
 
           // ----------------------------------------------------- integrations
-          PanelSectionHeader {
-            text: "INTEGRATIONS"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
+          Item {
+            width: parent.width
+            implicitHeight: integrationsHeader.implicitHeight
+
+            PanelSectionHeader {
+              id: integrationsHeader
+              width: parent.width
+              text: root.status === null
+                ? "Integrations"
+                : "Integrations  " + root.activeIntegrationCount + "/"
+                  + root.configuredIntegrationCount + " active"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Text {
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.editingIntegrations ? "Cancel" : "Edit"
+              color: root.integrationsPending ? root.dimmer : root.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+
+              MouseArea {
+                anchors.fill: parent
+                enabled: root.status !== null && !root.integrationsPending
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.editingIntegrations
+                  ? root.cancelIntegrationEdit()
+                  : root.beginIntegrationEdit()
+              }
+            }
           }
 
           // Show a loading placeholder until the first status snapshot arrives,
           // so the user doesn't see all-OFF and think integrations are broken.
           Text {
             width: parent.width
-            visible: root.status === null
+            visible: root.status === null && !root.integrationsPending
             text: "Reading\u2026"
             color: root.dimmer
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
 
+          Text {
+            width: parent.width
+            visible: root.integrationsPending
+            text: "Applying integration changes\u2026"
+            color: root.integrationsError ? root.accent : root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          Text {
+            width: parent.width
+            visible: root.integrationsError !== ""
+            text: root.integrationsError + ". Refresh and try again."
+            color: root.accent
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            wrapMode: Text.WordWrap
+          }
+
           Column {
             width: parent.width
             spacing: Style.spacing.md
-            visible: root.status !== null
+            visible: root.editingIntegrations && root.status !== null
+
+            Text {
+              width: parent.width
+              text: "Choose which tools receive proxy settings."
+              color: root.dim
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              wrapMode: Text.WordWrap
+            }
+
+            Repeater {
+              model: root.integrationList
+
+              delegate: Item {
+                required property var modelData
+                width: contentCol.width
+                height: Style.space(28)
+
+                readonly property bool selected: root.hasIntegration(
+                  root.draftIntegrations, modelData.key)
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: modelData.label
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                BorderSurface {
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  implicitWidth: editState.implicitWidth + Style.space(14)
+                  implicitHeight: editState.implicitHeight + Style.space(5)
+                  radius: Style.cornerRadius
+                  color: parent.selected
+                    ? Style.selectedFillFor(root.foreground, root.accent)
+                    : "transparent"
+                  borderSpec: Border.controlSpec(
+                    parent.selected ? "selected" : "normal",
+                    root.foreground, root.accent)
+
+                  Text {
+                    id: editState
+                    anchors.centerIn: parent
+                    text: parent.parent.selected ? "Selected" : "Off"
+                    color: parent.parent.selected ? root.accent : root.dimmer
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    font.bold: parent.parent.selected
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  enabled: !root.integrationsPending
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.toggleIntegrationSelection(modelData.key)
+                }
+              }
+            }
+
+            Item {
+              width: parent.width
+              height: Style.space(30)
+
+              Text {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Apply changes"
+                color: root.sameIntegrations(
+                  root.draftIntegrations,
+                  (root.status && root.status.integrations) || [])
+                  ? root.dimmer : root.accent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
+
+                MouseArea {
+                  anchors.fill: parent
+                  enabled: !root.integrationsPending
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: root.saveIntegrations()
+                }
+              }
+            }
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.md
+            visible: root.status !== null && !root.editingIntegrations
 
             Repeater {
               model: root.integrationList
@@ -416,9 +679,7 @@ Item {
                   return root.status.integrations.indexOf(modelData.key) !== -1
                 }
                 readonly property string integTip: !root.status ? "Loading\u2026"
-                  : root.displayEnabled
-                    ? (active ? modelData.label + " is active" : modelData.label + " failed to configure")
-                    : (configured ? "Enable proxy to activate " + modelData.label : modelData.label + " not in integrations list")
+                  : root.integrationDescription(modelData)
 
                 MouseArea {
                   id: integHover
@@ -452,12 +713,11 @@ Item {
                   Text {
                     id: integPillText
                     anchors.centerIn: parent
-                    text: parent.parent.active ? "ON" : "OFF"
+                    text: root.integrationState(modelData.key)
                     color: parent.parent.active ? root.accent : root.dimmer
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
-                    font.bold: true
-                    font.letterSpacing: 1.0
+                    font.bold: parent.parent.active
                   }
 
                   PanelToolTip {
@@ -477,7 +737,7 @@ Item {
 
             Text {
               anchors.left: parent.left
-              text: root.status === null ? "Reading status\u2026" : "status via abukiya.proxy"
+              text: root.status === null ? "Reading status\u2026" : "Live system status"
               color: root.dim
               opacity: 0.35
               font.family: root.fontFamily
@@ -486,7 +746,7 @@ Item {
 
             Text {
               anchors.right: parent.right
-              text: "esc close \u00b7 r refresh \u00b7 space toggle"
+              text: "Esc close  \u00b7  R refresh  \u00b7  Space toggle"
               color: root.dim
               opacity: 0.35
               font.family: root.fontFamily

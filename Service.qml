@@ -82,6 +82,11 @@ Item {
       return enabled ? "disabled" : "enabled"
     }
 
+    function setIntegrations(csv: string): string {
+      root.runScript(["set-integrations", csv || ""])
+      return "ok"
+    }
+
     function refresh(): string {
       root.refreshStatus()
       return "ok"
